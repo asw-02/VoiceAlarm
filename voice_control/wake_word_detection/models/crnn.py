@@ -1,12 +1,12 @@
 import torch.nn as nn
 
-class CRNNWakeWordGRU(nn.Module):
+class CRNNWakeWord(nn.Module):
     """
     CRNN + GRU für Wake Word Detection
     Effizientere Variante für Embedded Systeme
     """
     def __init__(self, num_classes=2, conv_channels=64, hidden_size=64, num_layers=2, dropout=0.3, bidirectional=True):
-        super(CRNNWakeWordGRU, self).__init__()
+        super(CRNNWakeWord, self).__init__()
         
         # Convolutional Feature Extractor
         self.conv_layers = nn.Sequential(
