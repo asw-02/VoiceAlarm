@@ -9,10 +9,12 @@ from glob import glob
 import soundfile as sf
 
 # ===============================================
-# CONFIG
+# CONFIGURATION
 # ===============================================
 SOURCE_DIR = "voice_control/wake_word_detection/dataset/collect_audio"
 OUTPUT_DIR = "voice_control/wake_word_detection/dataset"
+BACKGROUND_NOISE_DIR = "voice_control/wake_word_detection/dataset/background_noise"
+
 CLASSES = ["wake-word", "not-wake-word"]
 
 TRAIN_RATIO = 0.8
@@ -22,13 +24,14 @@ TEST_RATIO = 0.1
 SAMPLE_RATE = 16000
 AUGMENT_DOUBLE_DATA = True
 
-# Augmentation settings
-NOISE_LEVEL = 0.005
-GAIN_DB_RANGE = (-3, 3)  # volume variation in dB
+# Augmentation parameters
+WHITE_NOISE_LEVEL = 0.005
+BACKGROUND_NOISE_LEVEL = 0.1
+GAIN_DB_RANGE = (-3, 3)       # Volume variation in dB
 TIME_STRETCH_RANGE = (0.9, 1.1)  # Stretch factor
 
 # ===============================================
-# Hilfsfunktion zum Laden von WAV-Dateien
+# HELPER: Load file paths for dataset classes
 # ===============================================
 def load_file_paths(folder):
     paths = []
@@ -44,7 +47,24 @@ def load_file_paths(folder):
     return paths, labels
 
 # ===============================================
-# Dataset Klasse NUR FÜR CRNN
+# PRELOAD BACKGROUND NOISE FILES
+# ===============================================
+background_noise_files = []
+if os.path.exists(BACKGROUND_NOISE_DIR):
+    for f in os.listdir(BACKGROUND_NOISE_DIR):
+        if f.lower().endswith(".wav"):
+            background_noise_files.append(os.path.join(BACKGROUND_NOISE_DIR, f))
+
+# Preload & resample background noise for better performance
+preloaded_noise = []
+for noise_file in background_noise_files:
+    waveform, sr = torchaudio.load(noise_file)
+    if sr != SAMPLE_RATE:
+        waveform = torchaudio.functional.resample(waveform, sr, SAMPLE_RATE)
+    preloaded_noise.append(waveform)
+
+# ===============================================
+# DATASET CLASS (For CRNN model)
 # ===============================================
 class WakeWordDataset(Dataset):
     def __init__(self, file_paths, labels, sample_rate=SAMPLE_RATE, augment=True):
@@ -53,7 +73,7 @@ class WakeWordDataset(Dataset):
         self.sample_rate = sample_rate
         self.augment = augment
 
-        # Mel-Spektrogramm + SpecAugment
+        # Mel spectrogram + SpecAugment
         self.mel_transform = T.MelSpectrogram(
             sample_rate=self.sample_rate,
             n_fft=400,
@@ -67,16 +87,18 @@ class WakeWordDataset(Dataset):
         return len(self.file_paths)
 
     def load_audio(self, path):
+        # Load audio with soundfile to handle float32
         waveform, sr = sf.read(path, dtype='float32')
         if len(waveform.shape) == 1:
             waveform = torch.from_numpy(waveform).unsqueeze(0)
         else:
             waveform = torch.from_numpy(waveform).transpose(0, 1)
 
+        # Resample if needed
         if sr != self.sample_rate:
             waveform = torchaudio.functional.resample(waveform, sr, self.sample_rate)
 
-        # 1 Sekunde Länge sicherstellen
+        # Ensure 1 second duration
         target_length = int(self.sample_rate * 1.0)
         if waveform.size(1) < target_length:
             pad_size = target_length - waveform.size(1)
@@ -86,8 +108,28 @@ class WakeWordDataset(Dataset):
 
         return waveform
 
-    def add_noise(self, waveform):
-        return waveform + torch.randn_like(waveform) * NOISE_LEVEL
+    def add_white_noise(self, waveform):
+        return waveform + torch.randn_like(waveform) * WHITE_NOISE_LEVEL
+
+    def add_background_noise(self, waveform):
+        # Mix with a random background noise sample
+        if len(preloaded_noise) == 0:
+            return waveform
+
+        noise = random.choice(preloaded_noise).clone()
+        target_length = waveform.size(1)
+
+        # Adjust background noise length
+        if noise.size(1) < target_length:
+            repeat_factor = (target_length // noise.size(1)) + 1
+            noise = noise.repeat(1, repeat_factor)[:, :target_length]
+        elif noise.size(1) > target_length:
+            start = random.randint(0, noise.size(1) - target_length)
+            noise = noise[:, start:start + target_length]
+
+        # Apply volume scaling
+        noise = noise * BACKGROUND_NOISE_LEVEL
+        return waveform + noise
 
     def change_gain(self, waveform):
         db = random.uniform(*GAIN_DB_RANGE)
@@ -96,13 +138,13 @@ class WakeWordDataset(Dataset):
 
     def time_stretch(self, waveform):
         rate = random.uniform(*TIME_STRETCH_RANGE)
+        spec = torchaudio.transforms.Spectrogram()(waveform)
         stretched = torchaudio.functional.time_stretch(
-            torchaudio.transforms.Spectrogram()(waveform),
+            spec,
             hop_length=160,
             n_freq=201,
             overriding_rate=rate
         )
-        # zurück zu Waveform
         waveform = torchaudio.functional.istft(
             stretched,
             n_fft=400,
@@ -121,27 +163,31 @@ class WakeWordDataset(Dataset):
         label = self.labels[idx]
         waveform = self.load_audio(path)
 
+        # Apply augmentations
         if self.augment:
             if random.random() < 0.7:
-                waveform = self.add_noise(waveform)
+                waveform = self.add_white_noise(waveform)
+            if random.random() < 0.5:
+                waveform = self.add_background_noise(waveform)
             if random.random() < 0.5:
                 waveform = self.change_gain(waveform)
             if random.random() < 0.5:
                 waveform = self.time_stretch(waveform)
 
+        # Convert to Mel Spectrogram
         mel_spec = self.mel_transform(waveform)
         mel_spec = torchaudio.functional.amplitude_to_DB(
             mel_spec, multiplier=10, amin=1e-10, db_multiplier=0
         )
 
-        if self.augment:
-            if random.random() < 0.5:
-                mel_spec = self.spec_augment(mel_spec)
+        # SpecAugment
+        if self.augment and random.random() < 0.5:
+            mel_spec = self.spec_augment(mel_spec)
 
         return mel_spec, torch.tensor(label, dtype=torch.long)
 
 # ===============================================
-# Funktion: Daten splitten + augmentieren
+# PREPARE DATASET (split and optional augmentation)
 # ===============================================
 def prepare_dataset():
     for c in CLASSES:
@@ -162,23 +208,37 @@ def prepare_dataset():
             split_path = os.path.join(OUTPUT_DIR, split_name, c)
             os.makedirs(split_path, exist_ok=True)
 
-            # Alte Dateien löschen
+            # Clean old files
             for f in os.listdir(split_path):
                 os.remove(os.path.join(split_path, f))
 
             for f in split_files:
                 shutil.copy(f, split_path)
 
-                # Augmentierte Version nur für Training speichern
+                # Add augmented version for training set
                 if AUGMENT_DOUBLE_DATA and split_name == "train":
                     waveform, sr = torchaudio.load(f)
                     if sr != SAMPLE_RATE:
                         waveform = torchaudio.functional.resample(waveform, sr, SAMPLE_RATE)
 
-                    # Noise + Gain + Stretch
+                    # Add white noise
                     waveform_aug = waveform.clone()
-                    waveform_aug = waveform_aug + torch.randn_like(waveform_aug) * NOISE_LEVEL
+                    waveform_aug = waveform_aug + torch.randn_like(waveform_aug) * WHITE_NOISE_LEVEL
 
+                    # Add background noise
+                    if len(preloaded_noise) > 0:
+                        noise = random.choice(preloaded_noise).clone()
+                        target_length = waveform_aug.size(1)
+                        if noise.size(1) < target_length:
+                            repeat_factor = (target_length // noise.size(1)) + 1
+                            noise = noise.repeat(1, repeat_factor)[:, :target_length]
+                        elif noise.size(1) > target_length:
+                            start = random.randint(0, noise.size(1) - target_length)
+                            noise = noise[:, start:start + target_length]
+                        noise = noise * BACKGROUND_NOISE_LEVEL
+                        waveform_aug = waveform_aug + noise
+
+                    # Gain and stretch
                     if random.random() < 0.5:
                         db = random.uniform(*GAIN_DB_RANGE)
                         gain = 10 ** (db / 20)
@@ -195,6 +255,7 @@ def prepare_dataset():
                             length=int(SAMPLE_RATE * 1.0)
                         ).unsqueeze(0)
 
+                    # Save augmented audio
                     base, ext = os.path.splitext(os.path.basename(f))
                     aug_path = os.path.join(split_path, f"{base}_aug{ext}")
                     torchaudio.save(aug_path, waveform_aug, SAMPLE_RATE)
@@ -202,7 +263,7 @@ def prepare_dataset():
         print(f"{c}: total={n}, train={n_train}, val={n_val}, test={n_test}")
 
 # ===============================================
-# Funktion: DataLoader erstellen
+# DATA LOADERS
 # ===============================================
 def get_dataloaders(batch_size=32, num_workers=2):
     train_files, train_labels = load_file_paths(os.path.join(OUTPUT_DIR, "train"))
@@ -220,7 +281,7 @@ def get_dataloaders(batch_size=32, num_workers=2):
     return train_loader, val_loader, test_loader
 
 # ===============================================
-# Main
+# MAIN
 # ===============================================
 if __name__ == "__main__":
     print("\n📂 Preparing dataset for CRNN ...")
@@ -230,6 +291,6 @@ if __name__ == "__main__":
 
     print("\n🧪 Checking one batch for CRNN ...")
     for mel_spec, labels in train_loader:
-        print("Mel Spec:", mel_spec.shape)
+        print("Mel Spec shape:", mel_spec.shape)
         print("Labels:", labels[:10])
         break
