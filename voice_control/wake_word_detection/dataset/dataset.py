@@ -99,7 +99,7 @@ class WakeWordDataset(Dataset):
             waveform = torchaudio.functional.resample(waveform, sr, self.sample_rate)
 
         # Ensure 1 second duration
-        target_length = int(self.sample_rate * 1.0)
+        target_length = int(self.sample_rate * 1.2)
         if waveform.size(1) < target_length:
             pad_size = target_length - waveform.size(1)
             waveform = torch.nn.functional.pad(waveform, (0, pad_size))
@@ -149,7 +149,7 @@ class WakeWordDataset(Dataset):
             stretched,
             n_fft=400,
             hop_length=160,
-            length=int(SAMPLE_RATE * 1.0)
+            length=int(SAMPLE_RATE * 1.2)
         ).unsqueeze(0)
         return waveform
 
@@ -252,7 +252,7 @@ def prepare_dataset():
                         )
                         waveform_aug = torchaudio.functional.istft(
                             stretched, n_fft=400, hop_length=160,
-                            length=int(SAMPLE_RATE * 1.0)
+                            length=int(SAMPLE_RATE * 1.2)
                         ).unsqueeze(0)
 
                     # Save augmented audio
