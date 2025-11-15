@@ -17,7 +17,7 @@ BACKGROUND_NOISE_DIR = "voice_control/wake_word_detection/dataset/background_noi
 CLASSES = ["wake_word", "not_wake_word"]
 SAMPLE_RATE = 16000
 TARGET_DURATION = 1.1  # Sekunden
-AUGMENT_PER_AUDIO = 15  # Weitere Augmentierungen pro Originalaudio
+AUGMENT_PER_AUDIO = 20  # Weitere Augmentierungen pro Originalaudio
 
 # ===============================
 # LOAD BACKGROUND NOISE
@@ -44,24 +44,50 @@ class AudioAugmenter:
     def add_white_noise(self, waveform, strength=0.005):
         return waveform + torch.randn_like(waveform) * strength
 
-    def add_background_noise(self, waveform, noise, strength=0.15):
+
+    def add_background_noise_hq(self, waveform, noise, sr=SAMPLE_RATE, snr_db=25):
         target_len = waveform.size(1)
 
-        # Falls noise stereo ist → auf mono reduzieren
+        # --- 1) Noise auf mono ---
         if noise.size(0) > 1:
             noise = noise.mean(dim=0, keepdim=True)
 
+        # --- 2) Noise auf 1.1 Sekunden schneiden ---
+        one_sec = int(sr * 1.1)  # 1.1 Sekunden
+
+        if noise.size(1) >= one_sec:
+            noise = noise[:, :one_sec]
+        else:
+            repeat = (one_sec // noise.size(1)) + 1
+            noise = noise.repeat(1, repeat)[:, :one_sec]
+
+        # --- 3) Noise auf Target-Länge bringen ---
         if noise.size(1) < target_len:
             repeat = (target_len // noise.size(1)) + 1
             noise = noise.repeat(1, repeat)[:, :target_len]
-        elif noise.size(1) > target_len:
+        else:
             noise = noise[:, :target_len]
 
-        mixed = waveform + noise * strength
+        # --- 4) RMS-Werte berechnen ---
+        rms_signal = torch.sqrt(torch.mean(waveform**2) + 1e-9)
+        rms_noise  = torch.sqrt(torch.mean(noise**2) + 1e-9)
 
-        # 🔥 Sicherstellen, dass Ergebnis mono ist
-        if mixed.size(0) > 1:
-            mixed = mixed.mean(dim=0, keepdim=True)
+        # --- 5) SNR-Faktor berechnen ---
+        snr_factor = 10 ** (snr_db / 20)
+
+        # Ziel-RMS für das Noise basierend auf gewünschtem SNR
+        target_rms_noise = rms_signal / snr_factor
+
+        # --- 6) Noise skalieren ---
+        noise = noise * (target_rms_noise / rms_noise)
+
+        # --- 7) Mischung ---
+        mixed = waveform + noise
+
+        # --- 8) Clipping verhindern ---
+        max_val = mixed.abs().max()
+        if max_val > 1.0:
+            mixed = mixed / max_val
 
         return mixed
 
@@ -168,7 +194,7 @@ if __name__ == "__main__":
                 # Background Noise nur für SOURCE_DIR Audios, nicht YT Audio
                 if split_name == "train" or split_name in ["val", "test"]:
                     for idx, noise in enumerate(preloaded_noise):
-                        aug_wave = augmenter.add_background_noise(waveform.clone(), noise)
+                        aug_wave = augmenter.add_background_noise_hq(waveform.clone(), noise)
                         mel_aug = to_mel_spec(aug_wave, deterministic=(split_name != "train"))
                         aug_path = os.path.join(out_folder, f"{base}_bg{idx}.pt")
                         torch.save(mel_aug, aug_path)
