@@ -1,0 +1,235 @@
+[set_alarm]
+# --- Digital / Standard ---
+
+stelle den wecker auf {stunde} uhr
+stelle den wecker auf {stunde} uhr {minute}
+stelle den alarm auf {stunde} uhr
+stelle den alarm um {stunde} uhr
+stell den alarm auf {stunde}:{minute}
+wecker auf {stunde} uhr
+wecker auf {stunde} uhr {minute} stellen
+alarm auf {stunde}:{minute} setzen
+mach den wecker auf {stunde} uhr an
+wecker bitte auf {stunde} uhr {minute}
+einen alarm für {stunde} uhr {minute} setzen
+aktiviere den alarm für {stunde} uhr
+bitte den alarm auf {stunde} uhr stellen
+
+
+# --- Umgangssprache "Wecken" ---
+weck mich um {stunde} uhr
+weck mich um {stunde} uhr {minute}
+ich muss um {stunde} uhr aufstehen
+ich will um {stunde} uhr {minute} aufstehen
+kannst du mich bitte um {stunde} uhr wecken
+ich möchte morgen um {stunde} uhr {minute} geweckt werden
+sorg dafür dass ich um {stunde} uhr wach bin
+erinnere mich um {stunde} uhr aufzuwachen
+ich brauche einen alarm um {stunde} uhr
+es wäre super wenn der wecker um {stunde} uhr klingelt
+
+# --- Wochentage ---
+stelle den wecker {wochentag} um {stunde} uhr
+stelle den wecker {wochentag} um {stunde} uhr {minute}
+wecker {wochentag} um {stunde} uhr
+alarm {wochentag} um {stunde} uhr
+weck mich {wochentag} um {stunde} uhr
+am {wochentag} um {stunde} uhr wecken
+für {wochentag} einen alarm um {stunde}:{minute} einstellen
+
+# --- Relative Zeiten ---
+stelle den wecker auf halb {stunde}
+weck mich um halb {stunde}
+aktiviere wecker um halb {stunde}
+mach den wecker um halb {stunde}
+wecker auf viertel vor {stunde}
+wecker auf viertel nach {stunde}
+mache den wecker auf viertel nach {stunde}
+mache den wecker auf viertel vor {stunde}
+stelle den wecker auf viertel nach {stunde}
+stelle den wecker auf viertel vor {stunde}
+stelle wecker auf zehn nach {stunde}
+stelle wecker auf zwanzig vor {stunde}
+weck mich zehn nach {stunde}
+mache den wecker zehn nach {stunde}
+mache den wecker auf zwanzig vor {stunde}
+
+[delete_alarm]
+# --- Allgemein ---
+wecker ausschalten
+alarm ausschalten
+wecker löschen
+alarm löschen
+wecker stoppen
+alarm stoppen
+stoppe den alarm
+kannst du den alarm stoppen?
+mach den wecker aus
+schalte den alarm ab
+ruhe jetzt
+alarm deaktivieren
+alle alarme löschen
+wecker abbrechen
+
+# --- Spezifisch ---
+lösche den alarm um {stunde} uhr {minute}
+lösche den alarm um {stunde} uhr
+wecker um {stunde} uhr {minute} abbrechen
+wecker um {stunde} uhr {minute} deaktivieren
+nimm den alarm um {stunde} uhr {minute} raus
+lösche den wecker für {wochentag}
+lösch den wecker von {wochentag}
+entferne den alarm am {wochentag}
+schalte den wecker am {wochentag} um {stunde} uhr aus
+alarm auf {wochentag} entfernen
+
+
+[no_intent]
+# --- Smalltalk & Kommandos ohne Wecker ---
+ich liebe pizza
+wie ist das wetter heute
+erzähl mir einen witz
+spiel musik ab
+licht anmachen
+licht ausmachen
+wie spät ist es
+wer bist du
+das ist ein test
+ich heiße stefan
+guten morgen
+gute nacht
+was machst du gerade
+mir ist langweilig
+öffne youtube
+schreibe eine nachricht
+das gefällt mir
+ich bin müde
+wie viel uhr ist es
+wie viel uhr haben wir
+kannst du mir die Uhrzeit sagen
+wann kommt das essen
+kannst du das für mich googeln
+welches datum haben wir heute
+kann ich dir etwas beibringen
+ich bin gleich wieder da
+kannst du eine erinnerung speichern
+ich verstehe das nicht
+danke dir
+was soll ich heute kochen
+ich habe eine frage zu mathematik
+erzähl mir etwas über tiere
+ich höre gern musik
+alles klar
+ich will etwas fragen
+kannst du mir helfen
+mach bitte das fensterbild auf
+spiel ein lied von ed sheeran
+was ist die hauptstadt von spanien
+kannst du mir etwas erklären
+wie viele kilometer sind das bis berlin
+ich suche ein rezept für pasta
+was bedeutet dieses wort
+zeig mir ein bild von katzen
+mach mal lauter
+mach mal leiser
+stopp die musik
+mir ist kalt
+mach die heizung an
+wie lange dauert es nach hamburg
+kannst du das wiederholen
+ich habe hunger
+erzähl mir etwas interessantes
+wie funktioniert es
+ich gehe jetzt zur Uni
+ich gehe in die Schule
+ich gehe in die Kirche
+
+
+
+# --- Zeitangaben DIE KEINE WECKER SIND (Hard Negatives) ---
+es ist halb {stunde}
+es ist viertel vor {stunde}
+es ist viertel nach {stunde}
+es ist fünf nach {stunde}
+es ist fünf vor {stunde}
+es ist zehn nach {stunde}
+es ist zehn vor {stunde}
+ich gehe um {wochentag} uhr ins kino
+um {stunde} habe ich training
+ich esse meistens um {stunde} uhr zu abend
+der film beginnt um {stunde}:{minute}
+der zug fährt um {stunde} uhr ab
+mein meeting ist morgen um {stunde}
+ich komme heute erst um {stunde} nach hause
+der laden macht um {stunde} uhr auf
+wir treffen uns um {stunde} am bahnhof
+der kurs startet um {stunde} uhr {minute}
+ich muss um {stunde} wieder los
+der bus fährt um {stunde}
+ich arbeite bis {stunde} uhr
+ich bin normalerweise um {stunde} wach
+das spiel beginnt um {stunde}
+er kommt erst um {stunde}:{minute}
+ich habe am {wochentag} um {stunde} einen termin
+das fußballspiel ist am {wochentag} um {stunde}:{minute} uhr
+ich bin am {wochentag} gegen {stunde} uhr zuhause
+wir gehen am {wochentag} um {stunde} ins kino
+am {wochentag} bin ich um {stunde} verabredet
+die probe ist am {wochentag} um {stunde}
+am {wochentag} fahre ich um {stunde} los
+ich esse meistens um {stunde} uhr
+der film beginnt um {stunde}:{minute}
+ich komme so gegen {stunde} nach hause
+mein zug fährt um {stunde} uhr
+ich mache pause um {stunde} uhr
+ich starte meine arbeit um {stunde}
+das meeting beginnt um {stunde}:{minute}
+ich bin ab {stunde} uhr verfügbar
+der laden macht um {stunde} uhr auf
+wir treffen uns um {stunde} vor dem eingang
+ich gehe um {stunde} schlafen
+der bus kommt um {stunde}
+ich esse um {stunde}:{minute} zu mittag
+der zug kommt voraussichtlich um {stunde} an
+ich bin heute erst um {stunde}:{minute} fertig
+ich fahre am {wochentag} zu meinen eltern
+ich gehe am {wochentag} ins kino
+am {wochentag} habe ich viel zu tun
+ich treffe freunde am {wochentag}
+am {wochentag} mache ich sport
+ich arbeite am {wochentag} von zuhause
+am {wochentag} möchte ich einkaufen gehen
+ich bin am {wochentag} nicht verfügbar
+am {wochentag} habe ich frei
+ich verreise am {wochentag}
+am {wochentag} kommt besuch
+am {wochentag} habe ich einen kurs
+ich bin am {wochentag} den ganzen tag unterwegs
+am {wochentag} gehe ich früh schlafen
+ich bleibe am {wochentag} zuhause
+ich esse meistens um viertel nach {stunde}
+ich komme so gegen viertel vor {stunde} nach hause
+das meeting beginnt um halb {stunde}
+der bus fährt um viertel nach {stunde} los
+wir treffen uns um viertel vor {stunde} vor dem kino
+ich habe um halb {stunde} eine pause
+der film startet um viertel nach {stunde}
+ich gehe meistens um viertel vor {stunde} schlafen
+der zug kommt um halb {stunde} an
+ich bin ab viertel nach {stunde} verfügbar
+wir essen heute um viertel vor {stunde}
+ich muss spätestens um halb {stunde} los
+ich telefoniere heute um halb {stunde} mit einem freund
+die probe startet um viertel nach {stunde}
+ich mache eine pause um viertel vor {stunde}
+ich fahre erst um halb {stunde} los
+die konferenz fängt um viertel vor {stunde} an
+ich bin heute um viertel nach {stunde} fertig
+wir sind spätestens um halb {stunde} dort
+setze einen timer auf {minute} Minuten
+setze die stoppuhr {minute} Minuten
+ich habe einen termin um {stunde}:{minute}
+ich habe einen termin um halb {stunde}
+ich bin um viertel nach {stunde} verabredet
+ich bin um viertel vor {stunde} verabredet
+ich habe einen termin um {stunde}
