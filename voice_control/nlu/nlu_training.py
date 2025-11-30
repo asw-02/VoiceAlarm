@@ -25,8 +25,6 @@ WORD_TO_NUM = {
     "zwanzig": 20, "dreißig": 30, "vierzig": 40, "fünfzig": 50
 }
 
-STOPWORDS = {"der", "die", "das", "den", "um", "bitte", "mich", "für", "auf", "setzen", "stelle"}
-
 
 def text_to_int(text):
     """Convert German number word or digit to integer"""
@@ -41,7 +39,6 @@ def preprocess(text):
     text = text.lower()
     text = re.sub(r"[^\w\s]", "", text)
     tokens = text.split()
-    tokens = [str(text_to_int(tok)) if text_to_int(tok) is not None else tok for tok in tokens if tok not in STOPWORDS]
     return " ".join(tokens)
 
 
@@ -88,7 +85,6 @@ def preprocess(text):
     text = text.lower()
     text = re.sub(r"[^\w\s]", "", text)
     tokens = text.split()
-    tokens = [str(text_to_int(tok)) if text_to_int(tok) is not None else tok for tok in tokens if tok not in STOPWORDS]
     return " ".join(tokens)
 
 
@@ -238,7 +234,7 @@ if __name__ == "__main__":
         
         test_set = [
             # set_alarm
-            {"text": "Stell einen Alarm für Montag abend um halb 7 Uhr", "intent": "set_alarm"},
+            {"text": "einen Alarm für Montag abend um halb 7 Uhr stellen", "intent": "set_alarm"},
             {"text": "Weck mich in der Früh viertel nach acht", "intent": "set_alarm"},
             {"text": "Wecker auf 14.30 Uhr", "intent": "set_alarm"},
             {"text": "Kannst du mich bitte morgen um 10 Uhr 35 wecken?", "intent": "set_alarm"},
