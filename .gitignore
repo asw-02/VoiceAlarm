@@ -3,4 +3,7 @@ voice_control/speech_to_text/vosk-model-de-0.21
 voice_control/wake_word_detection/checkpoints
 voice_control/wake_word_detection/mlruns
 voice_control/wake_word_detection/dataset
+*__pycache__/
+*.png
+*.json
 

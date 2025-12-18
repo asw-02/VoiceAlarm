@@ -1,12 +1,17 @@
+# Default behavior
 * text=auto
 
-*.json    text
-*.txt     text
-*.md      text
+# Explicit text files (force Linux-friendly LF)
+*.py     text eol=lf
+*.sh     text eol=lf
+*.json   text eol=lf
+*.txt    text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
 
-*.onnx    binary
-*.pth     binary
-*.bin     binary
+# ML models / binaries
+*.onnx        binary
+*.pth         binary
+*.bin         binary
 *.safetensors binary
-*.png     binary
-*.jpg     binary
