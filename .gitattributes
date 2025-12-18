@@ -1,0 +1,12 @@
+* text=auto
+
+*.json    text
+*.txt     text
+*.md      text
+
+*.onnx    binary
+*.pth     binary
+*.bin     binary
+*.safetensors binary
+*.png     binary
+*.jpg     binary
