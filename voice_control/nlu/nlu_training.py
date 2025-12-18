@@ -9,10 +9,13 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.metrics import confusion_matrix, classification_report
+from skl2onnx import convert_sklearn
+from skl2onnx.common.data_types import StringTensorType
 
 # Configuration 
-TRAINING_FILE = "voice_control/nlu/training_data.json"
-MODEL_PATH = "voice_control/nlu/nlu_model.pkl"
+BASE_DIR = "voice_control/nlu/"
+TRAINING_FILE = os.path.join(BASE_DIR, "training_data.json")
+MODEL_PATH = os.path.join(BASE_DIR,"nlu_model.onnx")
 CONFIDENCE_THRESHOLD = 0.55  # threshold for "unknown"
 
 # Number mapping 
@@ -211,18 +214,24 @@ class AlarmNLU:
             "slots": {"hour": hour, "minute": minute, "weekday": weekday}
         }
 
-    # --- Save trained model ---
-    def save_model(self):
-        """
-        Saves the trained model to disk using joblib.
-        """
+    # --- Save trained model as onnx model---
+    def save_model_onnx(self, onnx_path=MODEL_PATH):
         if not self.is_trained:
             print("Error: model not trained.")
             return
-        os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
-        print(f"Saving model to '{self.model_path}'...")
-        joblib.dump(self.classifier, self.model_path)
-        print("Model saved.")
+        
+        # Define the input type: 1-dimensional string array
+        # [None, 1] means batch size is dynamic, and we provide 1 string at a time
+        initial_type = [('input_text', StringTensorType([None, 1]))]
+        
+        # Convert the pipeline
+        print(f"Converting model to ONNX...")
+        onx = convert_sklearn(self.classifier, initial_types=initial_type, 
+                            target_opset=12) # Opset 12 is widely compatible
+        
+        with open(onnx_path, "wb") as f:
+            f.write(onx.SerializeToString())
+        print(f"ONNX model saved to {onnx_path}")
 
 
 if __name__ == "__main__":
@@ -299,9 +308,9 @@ if __name__ == "__main__":
         plt.xlabel("Predicted")
         plt.ylabel("True")
         plt.title("NLU Confusion Matrix")
-        plt.show()
+        #plt.show()
 
         print("\n---------------------------------")
         print("Tests done.")
         
-        nlu.save_model()
+        nlu.save_model_onnx()
