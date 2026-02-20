@@ -22,8 +22,8 @@ from vosk import Model, KaldiRecognizer
 from datetime import timedelta
 
 from config import Config, VoiceConfig
-from voice.nlu import AlarmNLU
-from voice.resampler import StatefulResampler
+from voice_control.nlu import AlarmNLU
+from voice_control.resampler import StatefulResampler
 from hardware.sensors import StatusLED
 
 class VoiceControlThread(threading.Thread):
