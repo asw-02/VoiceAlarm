@@ -3,6 +3,8 @@
 
 stelle den wecker auf {stunde} uhr
 stelle den wecker auf {stunde} uhr {minute}
+stelle den wecker um {stunde} uhr {minute}
+stell den wecker auf {stunde} uhr {minute}
 stelle den alarm auf {stunde} uhr
 stelle den alarm um {stunde} uhr
 stell den alarm auf {stunde}:{minute}
@@ -18,6 +20,8 @@ bitte den alarm auf {stunde} uhr stellen
 
 # --- Umgangssprache "Wecken" ---
 weck mich um {stunde} uhr
+wecke mich in {minute} minuten
+weck mich in {stunden} stunden
 weck mich um {stunde} uhr {minute}
 ich muss um {stunde} uhr aufstehen
 ich will um {stunde} uhr {minute} aufstehen
@@ -29,8 +33,18 @@ ich brauche einen alarm um {stunde} uhr
 es wäre super wenn der wecker um {stunde} uhr klingelt
 
 # --- Wochentage ---
-stelle den wecker {wochentag} um {stunde} uhr
-stelle den wecker {wochentag} um {stunde} uhr {minute}
+stelle den wecker am {wochentag} um {stunde} uhr
+stelle den wecker am {wochentag} um {stunde} uhr {minute}
+stelle den wecker um {stunde} uhr am {wochentag}
+stelle den wecker  um {stunde} uhr {minute} am {wochentag}
+stelle den wecker um {stunde} uhr für {wochentag}
+stelle den wecker  um {stunde} uhr {minute} für {wochentag}
+stell den wecker am {wochentag} um {stunde} uhr
+stell den wecker am {wochentag} um {stunde} uhr {minute}
+stell den wecker um {stunde} uhr am {wochentag}
+stell den wecker  um {stunde} uhr {minute} am {wochentag}
+stell den wecker um {stunde} uhr für {wochentag}
+stell den wecker  um {stunde} uhr {minute} für {wochentag}
 wecker {wochentag} um {stunde} uhr
 alarm {wochentag} um {stunde} uhr
 weck mich {wochentag} um {stunde} uhr
@@ -38,7 +52,7 @@ am {wochentag} um {stunde} uhr wecken
 für {wochentag} einen alarm um {stunde}:{minute} einstellen
 
 # --- Relative Zeiten ---
-stelle den wecker auf halb {stunde}
+stell den wecker auf halb {stunde}
 weck mich um halb {stunde}
 aktiviere wecker um halb {stunde}
 mach den wecker um halb {stunde}
@@ -46,10 +60,10 @@ wecker auf viertel vor {stunde}
 wecker auf viertel nach {stunde}
 mache den wecker auf viertel nach {stunde}
 mache den wecker auf viertel vor {stunde}
-stelle den wecker auf viertel nach {stunde}
-stelle den wecker auf viertel vor {stunde}
-stelle wecker auf zehn nach {stunde}
-stelle wecker auf zwanzig vor {stunde}
+stell den wecker auf viertel nach {stunde}
+stell den wecker auf viertel vor {stunde}
+stell wecker auf zehn nach {stunde}
+stell wecker auf zwanzig vor {stunde}
 weck mich zehn nach {stunde}
 mache den wecker zehn nach {stunde}
 mache den wecker auf zwanzig vor {stunde}
@@ -70,6 +84,9 @@ ruhe jetzt
 alarm deaktivieren
 alle alarme löschen
 wecker abbrechen
+kannst du den alarm löschen
+lösche alarm
+kannst du den wecker löschen
 
 # --- Spezifisch ---
 lösche den alarm um {stunde} uhr {minute}
@@ -82,6 +99,7 @@ lösch den wecker von {wochentag}
 entferne den alarm am {wochentag}
 schalte den wecker am {wochentag} um {stunde} uhr aus
 alarm auf {wochentag} entfernen
+
 
 
 [no_intent]
