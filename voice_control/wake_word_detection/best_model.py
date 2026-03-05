@@ -16,7 +16,7 @@ import torchaudio.transforms as T
 from models import CRNNWakeWord 
 
 # ============================================================
-# 0️⃣ Setup & Reproducibility
+# Setup & Reproducibility
 # ============================================================
 def set_seed(seed=42):
     random.seed(seed)
@@ -29,7 +29,7 @@ def set_seed(seed=42):
 set_seed(42)
 
 # ============================================================
-# 1️⃣ Dataset & Helper Functions (Unchanged)
+# Dataset & Helper Functions (Unchanged)
 # ============================================================
 
 def load_dataset_split(output_dir="voice_control/wake_word_detection/dataset/final_dataset"):
@@ -113,7 +113,7 @@ def get_class_weights(labels, device):
     return torch.tensor(weights, dtype=torch.float).to(device)
 
 # ============================================================
-# 2️⃣ Visualization (Unchanged)
+# Visualization (Unchanged)
 # ============================================================
 
 def plot_detailed_confusion_matrix(cm, class_names, filename):
@@ -155,10 +155,10 @@ def plot_training_history(train_losses, train_accs, val_losses, val_accs, save_d
     path = os.path.join(save_dir, "training_history.png")
     plt.savefig(path)
     plt.close()
-    print(f"📈 Trainingskurve gespeichert: {path}")
+    print(f"Trainingskurve gespeichert: {path}")
 
 # ============================================================
-# 3️⃣ Training Loop (Unchanged)
+# Training Loop (Unchanged)
 # ============================================================
 
 def train_one_epoch(model, loader, criterion, optimizer, device, scaler):
@@ -211,12 +211,12 @@ def evaluate_full(model, loader, device):
     return acc, precision, recall, f1, cm
 
 # ============================================================
-# 4️⃣ Main (Updated for ONNX Export)
+# Main (Updated for ONNX Export)
 # ============================================================
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"🔧 Nutze Gerät: {device}")
+    print(f" Nutze Gerät: {device}")
     
     save_dir = "voice_control/wake_word_detection"
     os.makedirs(save_dir, exist_ok=True)
@@ -263,7 +263,7 @@ def main():
 
     # 3. Class Weights & Loss
     class_weights = get_class_weights(train_labels, device)
-    print(f"⚖️ Class Weights: {class_weights}")
+    print(f" Class Weights: {class_weights}")
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.AdamW(model.parameters(), lr=best_params["lr"], weight_decay=best_params["weight_decay"])
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=6, verbose=True)
@@ -278,7 +278,7 @@ def main():
     
     history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
-    print("\n🚀 Starte Training...")
+    print("\n Starte Training...")
     for epoch in range(epochs):
         train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, scaler)
         val_loss, val_acc = validate(model, val_loader, criterion, device)
@@ -301,7 +301,7 @@ def main():
         else:
             counter += 1
             if counter >= patience:
-                print(f"🛑 Early Stopping ausgelöst! Beste Val Acc: {best_val_acc:.4f}")
+                print(f"Early Stopping ausgelöst! Beste Val Acc: {best_val_acc:.4f}")
                 break
 
     # 5. Final Evaluation
@@ -311,7 +311,7 @@ def main():
 
     acc, precision, recall, f1, cm = evaluate_full(model, test_loader, device)
     
-    print("\n📊 TEST ERGEBNISSE:")
+    print("\n TEST ERGEBNISSE:")
     print(f"Accuracy:  {acc:.4f}")
     print(f"Precision: {precision:.4f}")
     print(f"Recall:    {recall:.4f}")
@@ -326,7 +326,7 @@ def main():
     # ============================================================
     # 6️⃣ ONNX Export (Optimized for Runtime)
     # ============================================================
-    print("\n📦 Exportiere zu ONNX für Raspberry Pi...")
+    print("\n Exportiere zu ONNX für Raspberry Pi...")
     
     # 1. Move model to CPU (Crucial for Raspberry Pi / ONNX Runtime compatibility)
     model_cpu = model.to("cpu")
@@ -353,11 +353,11 @@ def main():
                 'output': {0: 'batch_size'}
             }
         )
-        print(f"✅ ONNX Modell erfolgreich gespeichert: {onnx_path}")
-        print("💡 Tipp: Nutze 'onnxruntime' auf dem Raspberry Pi für 3-5x mehr Performance.")
+        print(f" ONNX Modell erfolgreich gespeichert: {onnx_path}")
+        print(" Tipp: Nutze 'onnxruntime' auf dem Raspberry Pi für 3-5x mehr Performance.")
         
     except Exception as e:
-        print(f"⚠️ Fehler beim ONNX Export: {e}")
+        print(f" Fehler beim ONNX Export: {e}")
         # Fallback: Save standard weights
         torch.save(model.state_dict(), os.path.join(save_dir, "model_weights.pth"))
 
