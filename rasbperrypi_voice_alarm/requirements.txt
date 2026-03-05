@@ -1,0 +1,9 @@
+gpiozero
+RPLCD
+smbus2
+sounddevice
+numpy
+torch
+torchaudio
+onnxruntime
+vosk
