@@ -57,9 +57,9 @@ This directory houses the production-ready Python codebase deployed on the Raspb
 * **Hardware & UI (`hardware_manager.py`, `ui_manager.py`):** Manages physical inputs/outputs (LCD menus, buttons, light sensor) and triggers the core alarm mechanisms (buzzer and solenoid).
 * **Voice Pipeline (`voice_assistant.py`, `models/`):** The real-time audio engine executing on-device wake-word detection, STT (Vosk), and NLU intent parsing. *(Note: The `models/` directory must be populated with the files generated in the training folder).*
 
-## 🗣️ Supported Voice Commands (Usage)
+## Supported Voice Commands (Usage)
 
-> **⚠️ Important Note: Language Restriction** > **This project is currently trained and configured exclusively for the German language.** The offline acoustic model (Vosk) and the custom NLU intent parser will only understand and process German speech. 
+> **Important Note: Language Restriction** > **This project is currently trained and configured exclusively for the German language.** The offline acoustic model (Vosk) and the custom NLU intent parser will only understand and process German speech. 
 
 To interact with the clock, wait for the wake-word detection (green LED) and say your command. The NLU engine is trained to extract intents and dynamic slots from natural German phrases.
 
