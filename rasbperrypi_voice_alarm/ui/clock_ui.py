@@ -16,9 +16,10 @@ from ui.manual_setup import ManualStartTime
 from hardware.sensors import HardwareButton, LCDManager, RTCManager
 
 class AlarmClockUI:
-    def __init__(self, db, start_data, light_sensor=None):
+    def __init__(self, db, start_data, light_sensor=None, tts_service=None):
         self.db = db
         self.light_sensor = light_sensor 
+        self.tts = tts_service
         self.apply_start_data(start_data)
         
         self.running = True
@@ -100,6 +101,69 @@ class AlarmClockUI:
         self.button_pressed = False
         self.last_button_time = 0
 
+    def speak(self, text, interrupt=False):
+        if self.tts:
+            self.tts.speak(text, interrupt=interrupt)
+
+    def _spoken_day_name(self, short_day: str) -> str:
+        day_map = {
+            "Mo": "Montag",
+            "Di": "Dienstag",
+            "Mi": "Mittwoch",
+            "Do": "Donnerstag",
+            "Fr": "Freitag",
+            "Sa": "Samstag",
+            "So": "Sonntag",
+        }
+        return day_map.get(short_day, short_day)
+
+    def _format_time_for_speech(self, time_str: str) -> str:
+        hh, mm = map(int, time_str.split(":"))
+        if mm == 0:
+            return f"{hh:02d} Uhr"
+        return f"{hh:02d} Uhr {mm:02d}"
+
+    def _describe_schedule_for_speech(self, days_list, time_str: str, prefer_relative=True) -> str:
+        time_text = self._format_time_for_speech(time_str)
+        days_list = days_list or []
+
+        if set(days_list) == set(Config.DAYS):
+            return f"jeden Tag um {time_text}"
+        if days_list == ["Sa", "So"]:
+            return f"am Wochenende um {time_text}"
+        if days_list == ["Mo", "Di", "Mi", "Do", "Fr"]:
+            return f"werktags um {time_text}"
+        if len(days_list) == 1:
+            if prefer_relative:
+                day_idx = Config.DAYS.index(days_list[0])
+                diff = (day_idx - self.get_now().weekday()) % 7
+                if diff == 0:
+                    return f"heute um {time_text}"
+                if diff == 1:
+                    return f"morgen um {time_text}"
+                if diff == 2:
+                    return f"uebermorgen um {time_text}"
+            return f"am {self._spoken_day_name(days_list[0])} um {time_text}"
+        return f"um {time_text} an den ausgewaehlten Tagen"
+
+    def _build_create_success_prompt(self, payload) -> str:
+        schedule = self._describe_schedule_for_speech(
+            payload.get("days", []),
+            payload.get("time", "00:00"),
+            prefer_relative=True,
+        )
+        return f"Alles klar. Ich habe den Wecker fuer {schedule} gespeichert."
+
+    def _build_delete_success_prompt(self, payload, deleted_alarm=None) -> str:
+        if deleted_alarm:
+            days_list = deleted_alarm.get("days", [])
+            time_str = deleted_alarm.get("time", "00:00")
+        else:
+            days_list = payload.get("days", [])
+            time_str = payload.get("time", "00:00")
+        schedule = self._describe_schedule_for_speech(days_list, time_str, prefer_relative=False)
+        return f"In Ordnung. Ich habe den Wecker fuer {schedule} geloescht."
+
     def stop(self):
         self.running = False
         self._stop_event.set()
@@ -131,12 +195,23 @@ class AlarmClockUI:
             self.temp_msg_end = time.time() + duration
         self.draw(force=True)
 
-    def request_confirmation(self, line1, line2, payload):
+    def request_confirmation(self, line1, line2, payload, spoken_prompt=None):
         with self.state_lock:
             self.voice_confirm_text = (line1, line2)
             self.voice_payload = payload
             self.current_frame = "voice_confirm"
         self.draw(force=True)
+        if spoken_prompt:
+            self.speak(spoken_prompt, interrupt=True)
+
+    def cancel_voice_request(self, spoken_text="In Ordnung, abgebrochen."):
+        with self.state_lock:
+            self.current_frame = "start"
+            self.voice_payload = None
+            self.voice_confirm_text = ("", "")
+        self.show_temp_message("Abgebrochen", "")
+        if spoken_text:
+            self.speak(spoken_text, interrupt=True)
 
     def execute_voice_payload(self):
         if not self.voice_payload: return
@@ -168,30 +243,43 @@ class AlarmClockUI:
                         }
                         self.db.save()
                         message_line1, message_line2 = "Gespeichert!", f"Auf Platz {new_id}"
+                        self.speak(self._build_create_success_prompt(self.voice_payload), interrupt=True)
                     else:
                         self.overwrite_mapping = sorted(list(self.db.data["wecker"].keys()), key=int)
                         self.voice_payload["type"] = "overwrite_menu"
                         self.selected_index = 0
                         next_frame = "overwrite_select"
+                        self.speak(
+                            "Es gibt keinen freien Speicherplatz. Bitte waehle einen Wecker zum Ueberschreiben.",
+                            interrupt=True,
+                        )
 
                 elif p_type == "delete":
                     wid = str(self.voice_payload.get("id"))
                     if wid in self.db.data["wecker"]:
+                        deleted_alarm = dict(self.db.data["wecker"][wid])
                         del self.db.data["wecker"][wid]
                         self.db.save()
                         message_line1, message_line2 = "Geloescht!", f"Wecker {wid} geloescht"
+                        self.speak(
+                            self._build_delete_success_prompt(self.voice_payload, deleted_alarm=deleted_alarm),
+                            interrupt=True,
+                        )
                     else:
                         message_line1, message_line2 = "Fehler", "ID nicht gefunden"
+                        self.speak("Diesen Wecker konnte ich nicht finden.", interrupt=True)
 
                 elif p_type == "delete_all":
                     self.db.data["wecker"] = {}
                     self.db.save()
                     message_line1, message_line2 = "Alles leer!", "Datenbank bereinigt"
+                    self.speak("In Ordnung. Ich habe alle Wecker geloescht.", interrupt=True)
 
         except Exception as e:
             self.show_temp_message("SYSTEM FEHLER", "Siehe Konsole")
             self.voice_payload = None
             self.current_frame = "start"
+            self.speak("Es ist ein Fehler aufgetreten. Bitte versuche es noch einmal.", interrupt=True)
             return
 
         self.refresh_wecker_list()
@@ -427,9 +515,7 @@ class AlarmClockUI:
 
         if self.btn_menu.is_pressed:
             if self.current_frame in ["voice_confirm", "overwrite_select"]:
-                self.current_frame = "start"
-                self.voice_payload = None
-                self.show_temp_message("Abgebrochen", "")
+                self.cancel_voice_request()
                 self.draw(force=True)
                 return
             
@@ -466,6 +552,7 @@ class AlarmClockUI:
             }
             self.db.save()
             self.show_temp_message("Ueberschrieben", f"Wecker {wid} ersetzt")
+            self.speak(self._build_create_success_prompt(self.voice_payload), interrupt=True)
             self.current_frame = "start"
             self.voice_payload = None
             self.refresh_wecker_list()
