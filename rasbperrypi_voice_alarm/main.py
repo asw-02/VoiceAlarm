@@ -11,12 +11,11 @@ import torch
 from config import Config
 
 # --- Components ---
-from audio.tts_service import TTSService
 from core.database import Database
 from hardware.sensors import LightSensor
 from ui.manual_setup import ManualStartTime
 from ui.clock_ui import AlarmClockUI
-from voice_control.voice_thread import VoiceControlThread
+from voice.voice_thread import VoiceControlThread
 
 # Optimize PyTorch for CPU usage
 torch.set_num_threads(2)
@@ -24,8 +23,6 @@ torch.set_grad_enabled(False)
 
 if __name__ == "__main__":
     print(">>> System Start...")
-    voice_thread = None
-    tts = None
     
     # 1. Initialize Database
     db = Database()
@@ -36,18 +33,15 @@ if __name__ == "__main__":
     # 3. Manual Time Set (Blocking UI on Startup)
     m_start = ManualStartTime()
     start_data = m_start.run() 
-
-    # 4. Initialize TTS
-    tts = TTSService()
     
-    # 5. Initialize Main UI
-    ui = AlarmClockUI(db, start_data, light_sensor=sensor, tts_service=tts)
+    # 4. Initialize Main UI
+    ui = AlarmClockUI(db, start_data, light_sensor=sensor)
     
-    # 6. Initialize and Start Voice Thread
-    voice_thread = VoiceControlThread(ui, tts_service=tts)
+    # 5. Initialize and Start Voice Thread
+    voice_thread = VoiceControlThread(ui)
     voice_thread.start()
 
-    # 7. Main Application Loop
+    # 6. Main Application Loop
     try:
         last_sec = -1
         last_marquee_tick = 0
@@ -90,9 +84,6 @@ if __name__ == "__main__":
         traceback.print_exc()
     finally:
         print(">>> Shutting down...")
-        if voice_thread:
-            voice_thread.stop()
-            voice_thread.join(timeout=2.0)
-        if tts:
-            tts.stop()
+        voice_thread.stop()
+        voice_thread.join(timeout=2.0)
         ui.shutdown_hw()

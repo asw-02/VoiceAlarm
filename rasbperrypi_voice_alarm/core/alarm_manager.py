@@ -57,8 +57,6 @@ class AlarmManager:
         if self.is_ringing(): return
         self.last_triggered_minute = minute
         self.stop_event.clear()
-        if hasattr(self.ui, "speak"):
-            self.ui.speak("Alarm.", interrupt=True)
         self.alarm_thread = threading.Thread(target=self._run_alarm_loop, daemon=True)
         self.alarm_thread.start()
 
@@ -73,6 +71,4 @@ class AlarmManager:
 
     def stop_alarm(self):
         self.stop_event.set()
-        if hasattr(self.ui, "speak"):
-            self.ui.speak("Alarm gestoppt.", interrupt=True)
         print(">>> [Hardware] Alarm gestoppt.")
