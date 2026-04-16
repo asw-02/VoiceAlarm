@@ -66,6 +66,14 @@ sudo apt-get update
 sudo apt-get install python3-smbus i2c-tools portaudio19-dev
 ```
 
+For offline TTS with Piper, also make sure a WAV playback tool is available:
+
+```bash
+sudo apt-get install alsa-utils
+```
+
+Place the `piper` binary somewhere in your `PATH`, or adjust `TTSConfig.PIPER_BINARY` in `config.py`.
+
 **2.Clone Project & Install Dependencies**
 
 It is highly recommended to use a virtual environment:
@@ -83,6 +91,18 @@ Place the following files and folders into the models/ directory:
 * `nlu_model.onnx`
 * `wake_word_model.onnx`
 * `dataset_stats.pt`
+* `de_DE-thorsten-medium.onnx`
+* `de_DE-thorsten-medium.onnx.json`
+
+## Voice Feedback and Confirmation
+
+The alarm clock now supports offline spoken feedback via Piper:
+
+* After the wake word, it says `Ich höre.`
+* If a command needs confirmation, it asks a spoken question.
+* Confirmation works either by voice (`ja` / `nein`) or by hardware buttons (`Save` = yes, `Menu` = no).
+
+If Piper, the model, or `aplay` is missing, the application keeps running and falls back to the LCD-only flow.
 
 **4. Run the Application**
 
