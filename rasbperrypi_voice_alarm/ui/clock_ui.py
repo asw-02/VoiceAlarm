@@ -33,6 +33,9 @@ class AlarmClockUI:
         
         self.voice_payload = None
         self.voice_confirm_text = ("", "")
+        self.voice_status_active = False
+        self.voice_status_text = ("", "")
+        self.voice_return_frame = "start"
         
         self.temp_msg_end = 0
         self.temp_msg_content = None
@@ -81,7 +84,7 @@ class AlarmClockUI:
         ]
 
         self.DIGIT_MAP = {
-            "0": [(0, 4, 1), (2, 5, 3)], "1": [(32, 32, 1), (32, 32, 3)],
+            "0": [(0, 4, 1), (2, 5, 3)], "1": [(1,), (3,)],
             "2": [(6, 6, 1), (2, 6, 6)], "3": [(4, 6, 1), (5, 6, 3)],
             "4": [(0, 5, 1), (32, 32, 3)], "5": [(0, 6, 6), (6, 6, 3)],
             "6": [(0, 6, 6), (2, 6, 3)], "7": [(4, 4, 1), (32, 2, 32)],
@@ -138,6 +141,30 @@ class AlarmClockUI:
             self.current_frame = "voice_confirm"
         self.draw(force=True)
 
+    def set_voice_status(self, line1, line2=""):
+        with self.state_lock:
+            self.temp_msg_content = None
+            self.temp_msg_end = 0
+
+            if self.current_frame not in {"voice_status", "voice_confirm", "overwrite_select"}:
+                self.voice_return_frame = self.current_frame
+                self.current_frame = "voice_status"
+            elif self.current_frame == "voice_status":
+                self.current_frame = "voice_status"
+
+            self.voice_status_active = True
+            self.voice_status_text = (str(line1 or ""), str(line2 or ""))
+        self.draw(force=True)
+
+    def end_voice_status(self):
+        with self.state_lock:
+            self.voice_status_active = False
+            self.voice_status_text = ("", "")
+            if self.current_frame == "voice_status":
+                self.current_frame = self.voice_return_frame or "start"
+                self.voice_return_frame = "start"
+        self.draw(force=True)
+
     def execute_voice_payload(self):
         if not self.voice_payload: return
         
@@ -161,11 +188,15 @@ class AlarmClockUI:
                             break
                     
                     if new_id is not None:
-                        self.db.data["wecker"][str(new_id)] = {
+                        alarm_data = {
                             "time": self.voice_payload["time"],
                             "days": self.voice_payload["days"],
                             "active": True
                         }
+                        if self.voice_payload.get("date"):
+                            alarm_data["date"] = self.voice_payload["date"]
+
+                        self.db.data["wecker"][str(new_id)] = alarm_data
                         self.db.save()
                         message_line1, message_line2 = "Gespeichert!", f"Auf Platz {new_id}"
                     else:
@@ -187,6 +218,25 @@ class AlarmClockUI:
                     self.db.data["wecker"] = {}
                     self.db.save()
                     message_line1, message_line2 = "Alles leer!", "Datenbank bereinigt"
+
+                elif p_type == "set_active":
+                    wid = str(self.voice_payload.get("id"))
+                    active = bool(self.voice_payload.get("active"))
+                    if wid in self.db.data["wecker"]:
+                        self.db.data["wecker"][wid]["active"] = active
+                        self.db.save()
+                        status = "aktiviert" if active else "deaktiviert"
+                        message_line1, message_line2 = "Gespeichert!", f"W{wid} {status}"
+                    else:
+                        message_line1, message_line2 = "Fehler", "ID nicht gefunden"
+
+                elif p_type == "set_all_active":
+                    active = bool(self.voice_payload.get("active"))
+                    for alarm in self.db.data["wecker"].values():
+                        alarm["active"] = active
+                    self.db.save()
+                    status = "aktiviert" if active else "deaktiviert"
+                    message_line1, message_line2 = "Gespeichert!", f"Alle {status}"
 
         except Exception as e:
             self.show_temp_message("SYSTEM FEHLER", "Siehe Konsole")
@@ -217,8 +267,19 @@ class AlarmClockUI:
     def get_next_alarm_info(self):
         now = self.get_now(); best_dt, best_id = None, None
         for wid, w in self.db.data["wecker"].items():
-            if not w["active"] or not w["days"]: continue
+            if not w["active"]: continue
             hh, mm = map(int, w["time"].split(":"))
+            if w.get("date"):
+                try:
+                    cand = datetime.strptime(f"{w['date']} {w['time']}", "%Y-%m-%d %H:%M")
+                except ValueError:
+                    continue
+                if cand <= now:
+                    continue
+                if best_dt is None or cand < best_dt: best_dt, best_id = cand, wid
+                continue
+
+            if not w["days"]: continue
             for d in w["days"]:
                 d_idx = Config.DAYS.index(d)
                 diff = (d_idx - now.weekday()) % 7
@@ -248,7 +309,14 @@ class AlarmClockUI:
         parts = []
         for wid, w in sorted(self.db.data["wecker"].items(), key=lambda x: int(x[0])):
             if not w["active"]: continue
-            days = ",".join(w["days"])
+            if w.get("date"):
+                try:
+                    alarm_date = datetime.strptime(w["date"], "%Y-%m-%d")
+                    days = alarm_date.strftime("%d.%m.")
+                except ValueError:
+                    days = w["date"]
+            else:
+                days = ",".join(w["days"])
             parts.append(f"W{wid} {w['time']} ({days})")
         return " | ".join(parts) if parts else "Keine aktiven Wecker"
 
@@ -269,19 +337,43 @@ class AlarmClockUI:
         for i, bitmap in enumerate(self.BIG_FONT_CHARS):
             self.lcd.create_char(i, bitmap)
             
-    def draw_big_time(self, time_str, row=0, col=0):
+    def draw_big_time(self, time_str, row=0, col=None):
         if hasattr(self, "_last_big_time") and self._last_big_time == time_str: return 
         self._last_big_time = time_str 
-        
-        # Oben
+
+        self.lcd.write_custom_chars(row, 0, [32] * Config.LCD_COLS)
+        self.lcd.write_custom_chars(row + 1, 0, [32] * Config.LCD_COLS)
+
+        widths = []
         for index, ch in enumerate(time_str):
             top, _ = self.DIGIT_MAP.get(ch, self.DIGIT_MAP[" "])
-            self.lcd.write_custom_chars(row, col + (index * 4), top)
+            width = len(top)
+
+            next_ch = time_str[index + 1] if index + 1 < len(time_str) else None
+            if next_ch and ch != ":" and next_ch != ":":
+                width += 1
+
+            widths.append(width)
+
+        total_width = sum(widths)
+        if col is None:
+            col = max(0, (Config.LCD_COLS - total_width) // 2)
+
+        positions = []
+        cursor = col
+        for index, ch in enumerate(time_str):
+            positions.append((cursor, ch))
+            cursor += widths[index]
+        
+        # Oben
+        for cursor, ch in positions:
+            top, _ = self.DIGIT_MAP.get(ch, self.DIGIT_MAP[" "])
+            self.lcd.write_custom_chars(row, cursor, top)
 
         # Unten
-        for index, ch in enumerate(time_str):
+        for cursor, ch in positions:
             _, bottom = self.DIGIT_MAP.get(ch, self.DIGIT_MAP[" "])
-            self.lcd.write_custom_chars(row + 1, col + (index * 4), bottom)
+            self.lcd.write_custom_chars(row + 1, cursor, bottom)
 
     def draw(self, force=False):
         if not self.running: return
@@ -323,10 +415,18 @@ class AlarmClockUI:
             self.lcd.write_line(2, self.voice_confirm_text[1])
             self.lcd.write_line(3, "Save=JA   Menu=NEIN")
             return
+
+        elif self.current_frame == "voice_status":
+            line1, line2 = self.voice_status_text
+            self.lcd.write_line(0, self.center_text("Sprachsteuerung"))
+            self.lcd.write_line(1, self.center_text(line1))
+            self.lcd.write_line(2, self.center_text(line2))
+            self.lcd.write_line(3, self.center_text("aktiv"))
+            return
         
         elif self.current_frame == "start":
             time_str = now.strftime("%H:%M")
-            self.draw_big_time(time_str, row=0, col=1)
+            self.draw_big_time(time_str, row=0)
             date_str = f"{Config.DAYS[now.weekday()]} {now.strftime('%d.%m.%Y')}"
             self.lcd.write_line(2, self.center_text(date_str))
             alarms_text = self.get_active_alarms_text()
@@ -459,11 +559,15 @@ class AlarmClockUI:
         
         if self.current_frame == "overwrite_select":
             wid = str(self.overwrite_mapping[self.selected_index])
-            self.db.data["wecker"][wid] = {
+            alarm_data = {
                 "time": self.voice_payload["time"],
                 "days": self.voice_payload["days"],
                 "active": True
             }
+            if self.voice_payload.get("date"):
+                alarm_data["date"] = self.voice_payload["date"]
+
+            self.db.data["wecker"][wid] = alarm_data
             self.db.save()
             self.show_temp_message("Ueberschrieben", f"Wecker {wid} ersetzt")
             self.current_frame = "start"
@@ -558,5 +662,22 @@ class AlarmClockUI:
         self.selected_index = 0; self.draw(True)
 
     def shutdown_hw(self):
-        self.lcd.clear()
-        self.lcd.set_backlight(False)
+        self.running = False
+        self._stop_event.set()
+
+        for button_name in ("btn_menu", "btn_up", "btn_down", "btn_save"):
+            button = getattr(self, button_name, None)
+            if button:
+                button.close()
+
+        if self.alarm_manager:
+            self.alarm_manager.shutdown()
+
+        if self.light_sensor and hasattr(self.light_sensor, "close"):
+            self.light_sensor.close()
+
+        if self.rtc and hasattr(self.rtc, "close"):
+            self.rtc.close()
+
+        if self.lcd:
+            self.lcd.close()
