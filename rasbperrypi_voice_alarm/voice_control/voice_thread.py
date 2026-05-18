@@ -2,332 +2,401 @@
 # -*- coding: utf-8 -*-
 
 """
-Background thread managing the microphone, wake word detection, and speech recognition.
+Background thread for the German Qwen voice assistant.
+
+Flow:
+Wake word -> dynamic WAV recording -> Vosk transcription -> Qwen via Ollama
+-> Piper speech output.
 """
 
-import os
-import time
-import json
-import threading
 import queue
-import numpy as np
+import random
+import threading
+import time
 
 import sounddevice as sd
-import torch
-import torchaudio
-import torchaudio.transforms as T
-import torch.nn.functional as F
-import onnxruntime as ort
-from vosk import Model, KaldiRecognizer
-from datetime import timedelta
 
 from config import Config, VoiceConfig
-from voice_control.nlu import AlarmNLU
-from voice_control.resampler import StatefulResampler
 from hardware.sensors import StatusLED
+from voice_control.command_router import VoiceCommandRouter
+from voice_control.qwen_assistant import QwenVoiceAssistant
+from voice_control.wake_word_detection import WakeWordDetector
+
+
+WAKE_PROMPTS = [
+    "Was kann ich fuer dich tun?",
+    "Wie kann ich dir helfen?",
+    "Ja,Ich hoere dir zu.",
+    "Sag mir, was ich tun soll.",
+    "Ja, Ich bin bereit.",
+    "Womit kann ich helfen?",
+    "Was brauchst du gerade?",
+    "Ja, so heiße ich, was kann ich für dich tun?"
+]
+
 
 class VoiceControlThread(threading.Thread):
-    """Listens continuously to audio and dispatches commands to the UI."""
-    
+    """Runs the wake-word gated Qwen assistant in the background."""
+
     def __init__(self, ui_reference):
-        super().__init__()
-        # Initialisiere die LEDs über den sauberen Wrapper
-        self.leds = {
-            "red":    StatusLED(Config.PIN_LED_ROT),
-            "yellow": StatusLED(Config.PIN_LED_GELB),
-            "green":  StatusLED(Config.PIN_LED_GRUEN)
-        }
-        self._all_leds_off()
+        super().__init__(daemon=True)
         self.ui = ui_reference
-        self.daemon = True
         self._stop_event = threading.Event()
         self.audio_queue = queue.Queue(maxsize=20)
-        self.ww_counter = 0
-        self.device = torch.device("cpu")
-        
-        print("[Voice] Initializing models...")
-        self.ui.show_temp_message("Voice Control", "loading ...", duration=15)
-        self.ui.draw(force=True)
-        
-        # 1. NLU
-        self.nlu = AlarmNLU(VoiceConfig.NLU_MODEL_PATH)
-        
-        # 2. STT (Vosk)
-        if not os.path.exists(VoiceConfig.STT_MODEL_PATH):
-            print(f"[Error] Vosk model missing: {VoiceConfig.STT_MODEL_PATH}")
-            self.running = False
-        else:
-            self.running = True
-            self.stt_model = Model(str(VoiceConfig.STT_MODEL_PATH))
-            self.recognizer = KaldiRecognizer(self.stt_model, VoiceConfig.MODEL_SAMPLE_RATE)
+        self.leds = {}
+        self._led_timers = []
+        self.assistant = QwenVoiceAssistant()
+        self.command_router = VoiceCommandRouter(self.ui, self.assistant)
+        self.vosk_model = None
+        self.wake_detector = None
+        self.running = False
+        self._alarm_voice_blocked = False
 
-        # 3. Wake Word
-        self.ww_session = ort.InferenceSession(VoiceConfig.WAKE_MODEL_PATH, providers=["CPUExecutionProvider"])
-        self.ww_input = self.ww_session.get_inputs()[0].name
-        
-        # Audio Resampler (44.1k -> 16k)
-        self.resampler = StatefulResampler( 
-            orig_sr=VoiceConfig.MIC_SAMPLE_RATE,   
-            target_sr=VoiceConfig.MODEL_SAMPLE_RATE, 
-            overlap=256,
-            device=self.device)
-        
-        self.mel_transform = T.MelSpectrogram(sample_rate=16000, n_fft=400, hop_length=160, n_mels=64).to(self.device)
-        
-        # Wake Word Stats normalization
-        if os.path.exists(VoiceConfig.WAKE_STATS_PATH):
-            stats = torch.load(VoiceConfig.WAKE_STATS_PATH, map_location=self.device)
-            self.norm_mean, self.norm_std = stats["mean"], stats["std"]
-        else:
-            self.norm_mean, self.norm_std = torch.tensor(0.0), torch.tensor(1.0)
+        self._init_leds()
+        self._init_models()
 
-        # Buffer for Wake Word (rolling buffer)
-        self.ww_buffer = torch.zeros(int(16000 * 1.1)) # 1.1s buffer at 16k
+    def _init_leds(self):
+        try:
+            self.leds = {
+                "red": StatusLED(Config.PIN_LED_ROT),
+                "yellow": StatusLED(Config.PIN_LED_GELB),
+                "green": StatusLED(Config.PIN_LED_GRUEN),
+            }
+            self._all_leds_off()
+        except Exception as exc:
+            print(f"[Voice] LED init skipped: {exc}")
+            self.leds = {}
+
+    def _init_models(self):
+        print("[Voice] Initializing German Qwen assistant...")
+        self._show_temp_message("Sprachmodell", "wird geladen", duration=15)
+
+        try:
+            self.assistant.show_audio_devices()
+        except Exception as exc:
+            print(f"[Voice] Could not list audio devices: {exc}")
+
+        try:
+            self.vosk_model = self.assistant.load_vosk_model()
+        except Exception as exc:
+            print(f"[Voice] Fehler beim Laden des Vosk-Modells: {exc}")
+            self._show_temp_message("Voice Error", "Vosk missing", duration=8)
+            return
+
+        try:
+            self.wake_detector = WakeWordDetector()
+        except Exception as exc:
+            print(f"[Voice] Fehler beim Laden des Wake-Word-Modells: {exc}")
+            self._show_temp_message("Voice Error", "Wake missing", duration=8)
+            return
+
+        try:
+            sd.check_input_settings(
+                device=VoiceConfig.MIC_DEVICE,
+                channels=VoiceConfig.CHANNELS,
+                samplerate=VoiceConfig.MIC_SAMPLE_RATE,
+            )
+            print("[Voice] Mikrofon unterstützt 48 kHz.")
+        except Exception as exc:
+            print("[Voice] Fehler: Mikrofon unterstützt diese Einstellungen nicht.")
+            print(exc)
+            self._show_temp_message("Voice Error", "Mic config", duration=8)
+            return
+
+        self.running = True
+        self._show_temp_message("Voice Control", "bereit", duration=4)
 
     def stop(self):
         self._stop_event.set()
+        self._cancel_led_timers()
+        self._all_leds_off()
+        self._end_voice_status()
+        self._drain_audio_queue()
+        if hasattr(self.assistant, "close"):
+            self.assistant.close()
+
+    def _show_temp_message(self, line1, line2="", duration=5):
+        if not self.ui or not hasattr(self.ui, "show_temp_message"):
+            return
+
+        try:
+            self.ui.show_temp_message(line1, line2, duration=duration)
+            if hasattr(self.ui, "draw"):
+                self.ui.draw(force=True)
+        except Exception as exc:
+            print(f"[Voice] UI message failed: {exc}")
+
+    def _set_voice_status(self, line1, line2="", duration=None):
+        if not self.ui:
+            return
+
+        try:
+            if hasattr(self.ui, "set_voice_status"):
+                self.ui.set_voice_status(line1, line2)
+            else:
+                self._show_temp_message(line1, line2, duration=duration or 5)
+        except Exception as exc:
+            print(f"[Voice] UI voice status failed: {exc}")
+
+    def _end_voice_status(self):
+        if not self.ui or not hasattr(self.ui, "end_voice_status"):
+            return
+
+        try:
+            self.ui.end_voice_status()
+        except Exception as exc:
+            print(f"[Voice] UI voice status end failed: {exc}")
 
     def _all_leds_off(self):
         for led in self.leds.values():
             led.off()
 
     def _set_led(self, color, state):
-        if color in self.leds:
-            if state: self.leds[color].on()
-            else: self.leds[color].off()
+        led = self.leds.get(color)
+        if not led:
+            return
+
+        if state:
+            led.on()
+        else:
+            led.off()
+
+    def _blink_led_async(self, color, duration=2.0):
+        self._set_led(color, True)
+        self._led_timers = [timer for timer in self._led_timers if timer.is_alive()]
+        timer = threading.Timer(duration, lambda: self._set_led(color, False))
+        timer.daemon = True
+        self._led_timers.append(timer)
+        timer.start()
+
+    def _cancel_led_timers(self):
+        for timer in self._led_timers:
+            timer.cancel()
+        self._led_timers = []
+
+    def _should_stop_voice(self):
+        return self._stop_event.is_set() or self._alarm_is_ringing()
+
+    def _cleanup(self):
+        self._stop_event.set()
+        self._cancel_led_timers()
+        self._end_voice_status()
+        self._drain_audio_queue()
+        self._all_leds_off()
+
+        for led in self.leds.values():
+            if hasattr(led, "close"):
+                led.close()
+        self.leds = {}
+
+        if hasattr(self.assistant, "close"):
+            self.assistant.close()
 
     def _audio_callback(self, indata, frames, time_info, status):
+        if status:
+            print("[Voice] Audio Status:", status)
+
         try:
-            self.audio_queue.put_nowait(indata.copy())
+            self.audio_queue.put_nowait(indata[:, 0].copy())
         except queue.Full:
             pass
 
-    def _check_wake_word(self, audio_16k_tensor):
-        rms = torch.sqrt(torch.mean(audio_16k_tensor**2))
-        if rms.item() < VoiceConfig.SILENCE_THRESHOLD:
+    def _drain_audio_queue(self):
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _alarm_is_ringing(self):
+        alarm_manager = getattr(self.ui, "alarm_manager", None)
+        if not alarm_manager or not hasattr(alarm_manager, "is_ringing"):
             return False
-            
-        new_samples = audio_16k_tensor.numel()
-        self.ww_buffer = torch.roll(self.ww_buffer, -new_samples)
-        self.ww_buffer[-new_samples:] = audio_16k_tensor
-        
-        mel = self.mel_transform(self.ww_buffer)
-        mel = torchaudio.functional.amplitude_to_DB(mel, multiplier=10., amin=1e-10, db_multiplier=0.0, top_db=80.)
-        
-        mel = mel.unsqueeze(0).unsqueeze(0) # [1, 1, 64, Time]
-        mel = F.interpolate(mel, size=(64, 110), mode='bilinear', align_corners=False)
-        mel = (mel.squeeze(0).squeeze(0) - self.norm_mean) / (self.norm_std + 1e-6)
-        
-        input_np = mel.unsqueeze(0).unsqueeze(0).numpy()
-        out = self.ww_session.run(None, {self.ww_input: input_np})
-        probs = np.exp(out[0]) / np.sum(np.exp(out[0]), axis=1, keepdims=True)
-        return probs[0][0] > VoiceConfig.WAKE_CONFIDENCE
 
-    def process_intent_for_confirmation(self, nlu_res):
-        print("\n" + "="*40)
-        print(">>> [DEBUG] --- START VOICE PROCESSING ---")
-        
-        intent = nlu_res.get("intent")
-        slots = nlu_res.get("slots", {})
-        full_text = nlu_res.get("text", "").lower()
-        
-        # ==========================
-        # CASE 1: SET ALARM
-        # ==========================
-        if intent == "set_alarm":
-            now = self.ui.get_now()
-            rel_delta = slots.get("relative_delta")
-            
-            if rel_delta:
-                h_delta, m_delta = rel_delta
-                future_time = now + timedelta(hours=h_delta, minutes=m_delta)
-                hour, minute = future_time.hour, future_time.minute
-                day_str = Config.DAYS[future_time.weekday()]
-                days_list = [day_str]
-                print(f">>> [DEBUG] Relative: +{h_delta}h {m_delta}m -> {day_str} {hour}:{minute}")
-            else:
-                hour = slots.get("hour")
-                minute = slots.get("minute") or 0
+        try:
+            return alarm_manager.is_ringing()
+        except Exception:
+            return False
 
-                if hour is None:
-                    self.ui.show_temp_message("Error", "No time understood")
-                    return
-                
-                wd_raw = slots.get("weekday")
-                days_list = []
-                
-                if "wochenende" in full_text:
-                    days_list = ["Sa", "So"]
-                elif any(x in full_text for x in ["wochentags", "werktags", "arbeitstagen", "unter der woche"]):
-                    days_list = ["Mo", "Di", "Mi", "Do", "Fr"]
-                elif wd_raw is not None:
-                    wd_idx = 0
-                    if isinstance(wd_raw, int): wd_idx = wd_raw
-                    elif wd_raw == "PLUS_0": wd_idx = now.weekday()
-                    elif wd_raw == "PLUS_1": wd_idx = (now.weekday() + 1) % 7
-                    elif wd_raw == "PLUS_2": wd_idx = (now.weekday() + 2) % 7
-                    days_list = [Config.DAYS[wd_idx]]
-                else:
-                    days_list = Config.DAYS[:] 
+    def _end_voice_for_alarm(self):
+        self._cancel_led_timers()
+        self._all_leds_off()
+        self.command_router.end_dialog(cancel_confirmation=True)
+        self.assistant.reset_conversation()
+        self._drain_audio_queue()
+        self._end_voice_status()
+        if not self._alarm_voice_blocked:
+            self._show_temp_message("Alarm aktiv", "Voice aus", duration=2)
+        self._alarm_voice_blocked = True
 
-            time_str = f"{hour:02d}:{minute:02d}"
-            
-            payload = {
-                "type": "create",
-                "time": time_str,
-                "days": days_list,
-                "active": True
-            }
-            
-            if set(days_list) == set(Config.DAYS): msg_line1 = "Every Day"
-            elif days_list == ["Sa", "So"]: msg_line1 = "Weekend"
-            elif days_list == ["Mo", "Di", "Mi", "Do", "Fr"]: msg_line1 = "Weekdays"
-            elif len(days_list) == 1: msg_line1 = f"On {days_list[0]}"
-            else: msg_line1 = "Set days"
-                
-            msg_line2 = f"At: {time_str}?"
-            
-            if hasattr(self.ui, "request_confirmation"):
-                self.ui.request_confirmation(msg_line1, msg_line2, payload)
+    def _pause_while_alarm_rings(self):
+        if not self._alarm_is_ringing():
+            self._alarm_voice_blocked = False
+            return False
 
-        # ==========================
-        # CASE 2: DELETE ALARM
-        # ==========================
-        elif intent == "delete_alarm":
-            if any(w in full_text for w in ["alle", "alles", "sämtliche"]):
-                count = len(self.ui.db.data["wecker"])
-                if count == 0:
-                    self.ui.show_temp_message("Info", "Nothing to delete")
-                    return
-                payload = { "type": "delete_all" }
-                msg_line1 = "DELETE ALL?"
-                msg_line2 = f"Are you sure? ({count})"
-                if hasattr(self.ui, "request_confirmation"):
-                    self.ui.request_confirmation(msg_line1, msg_line2, payload)
-                return
+        self._end_voice_for_alarm()
+        while not self._stop_event.is_set() and self._alarm_is_ringing():
+            self._drain_audio_queue()
+            time.sleep(0.5)
 
-            target_id = None
-            if slots.get("target_id"):
-                target_id = str(slots.get("target_id"))
-            elif slots.get("hour") is not None:
-                s_hour = slots.get("hour")
-                s_min = slots.get("minute") or 0
-                search_time = f"{s_hour:02d}:{s_min:02d}"
-                for wid, data in self.ui.db.data["wecker"].items():
-                    if data["time"] == search_time:
-                        target_id = wid
-                        break
-                if not target_id:
-                    self.ui.show_temp_message("Not found", f"No alarm {search_time}")
-                    return
-            else:
-                next_info = self.ui.get_next_alarm_info() 
-                if next_info[0] != "Kein Wecker":
-                    target_id = next_info[0].replace("W", "")
-                else:
-                    self.ui.show_temp_message("Info", "No active alarm")
-                    return
+        self._alarm_voice_blocked = False
+        self._drain_audio_queue()
+        return True
 
-            if target_id and target_id in self.ui.db.data["wecker"]:
-                w_data = self.ui.db.data["wecker"][target_id]
-                days_str = ",".join(w_data["days"]) if w_data["days"] else "Once"
-                if len(days_str) > 10: days_str = days_str[:10] + "."
+    def _wait_for_wake_word(self):
+        self._drain_audio_queue()
 
-                payload = { "type": "delete", "id": target_id }
-                msg_line1 = f"Delete W{target_id}?"
-                msg_line2 = f"{w_data['time']} ({days_str})"
+        if self._pause_while_alarm_rings():
+            return False
 
-                if hasattr(self.ui, "request_confirmation"):
-                    self.ui.request_confirmation(msg_line1, msg_line2, payload)
-            else:
-                self.ui.show_temp_message("Error", f"ID {target_id} not found")
-    
-    def _blink_led_async(self, color, duration=2.0):
-        self._set_led(color, True)
-        threading.Timer(duration, lambda: self._set_led(color, False)).start()
-
-    def run(self):
-        print("[Voice] Thread started. Waiting for Wake Word...")
-        if getattr(self, "running", True) == False:
-            return
-            
-        state = "WAITING"
-        
-        with sd.InputStream(device=2,
-                    samplerate=VoiceConfig.MIC_SAMPLE_RATE,
-                    blocksize=VoiceConfig.CHUNK_SIZE,
-                    channels=1, dtype='float32',
-                    callback=self._audio_callback):
-            
+        with sd.InputStream(
+            device=VoiceConfig.MIC_DEVICE,
+            channels=VoiceConfig.CHANNELS,
+            samplerate=VoiceConfig.MIC_SAMPLE_RATE,
+            blocksize=VoiceConfig.BLOCK_SIZE,
+            dtype="float32",
+            callback=self._audio_callback,
+        ):
             while not self._stop_event.is_set():
-                if self.ui.current_frame == "voice_confirm" or self.ui.temp_msg_content is not None:
-                    while not self.audio_queue.empty():
-                        try: self.audio_queue.get_nowait()
-                        except queue.Empty: pass
-                    time.sleep(0.2)
-                    continue
-
-                if self.ui.alarm_manager.is_ringing():
-                    while not self.audio_queue.empty(): self.audio_queue.get()
-                    time.sleep(0.5)
-                    continue
+                if self._alarm_is_ringing():
+                    self._end_voice_for_alarm()
+                    return False
 
                 try:
-                    audio_chunk = self.audio_queue.get(timeout=1)
+                    audio = self.audio_queue.get(timeout=0.2)
                 except queue.Empty:
                     continue
-                
-                chunk_tensor = torch.from_numpy(audio_chunk).squeeze()
-                chunk_16k = self.resampler.process(chunk_tensor)
-                
-                if state == "WAITING":
-                    self.ww_counter = (self.ww_counter + 1) % 2
-                    if self.ww_counter != 0: continue
-                    
-                    if self._check_wake_word(chunk_16k):
-                        print("\n>>> WAKE WORD DETECTED!")
-                        self.ui.last_button_time = time.time()
-                        self.ui.draw(force=True)
-                        
-                        self._blink_led_async("green", 0.5) 
-                        self._set_led("yellow", True)        
-                        
-                        while not self.audio_queue.empty():
-                            try: self.audio_queue.get_nowait()
-                            except queue.Empty: pass
 
-                        self.recognizer.Reset()
-                        state = "LISTENING"
-                        
-                elif state == "LISTENING":
-                    audio_int16 = (chunk_16k.clamp(-1.0, 1.0).mul(32767).short().numpy().tobytes())
-                    
-                    if self.recognizer.AcceptWaveform(audio_int16):
-                        self._set_led("yellow", False)
+                triggered, wake_prob, not_wake_prob, hits = (
+                    self.wake_detector.process_audio_block(audio)
+                )
 
-                        try:
-                            res = json.loads(self.recognizer.Result())
-                            text = res.get("text", "")
-                            print(f">>> Heard: {text}")
-                             
-                            if text:
-                                nlu_res = self.nlu.parse(text)
-                                print(f">>> Intent: {nlu_res['intent']} | Slots: {nlu_res['slots']}")
-                                
-                                if nlu_res.get("intent") != "unknown":
-                                    self._blink_led_async("green", 2.0)
-                                    self.process_intent_for_confirmation(nlu_res)
-                                else:
-                                    self._blink_led_async("red", 2.0)
-                            else:
-                                self._blink_led_async("red", 2.0)
+                print(
+                    f"Wake: {wake_prob:.3f} | "
+                    f"Not Wake: {not_wake_prob:.3f} | "
+                    f"Hits: {hits}",
+                    end="\r",
+                )
 
-                        except Exception as e:
-                            print(f">>> [ERROR] Command processing failed: {e}")
-                            self._blink_led_async("red", 1.0)
-                        
-                        while not self.audio_queue.empty():
-                            try: self.audio_queue.get_nowait()
-                            except queue.Empty: pass
+                if triggered:
+                    print("\nWake Word erkannt!\n")
+                    return True
 
-                        state = "WAITING"
+        return False
+
+    def _handle_wake_word(self):
+        if self._alarm_is_ringing():
+            self._end_voice_for_alarm()
+            return
+
+        self._set_voice_status("Sprachsteuerung", "aktiv")
+        self._blink_led_async("green", 1)
+
+        if hasattr(self.ui, "last_button_time"):
+            self.ui.last_button_time = time.time()
+
+        self.assistant.reset_conversation()
+        self.command_router.reset_pending()
+
+        prompt = random.choice(WAKE_PROMPTS)
+        self.assistant.speak(prompt, should_stop=self._should_stop_voice)
+
+        if self._alarm_is_ringing():
+            self._end_voice_for_alarm()
+            return
+
+        while not self._stop_event.is_set() and not self._alarm_is_ringing():
+            self._set_led("yellow", True)
+            user_text = self.assistant.listen_once_from_wav(
+                self.vosk_model,
+                stop_event=self._stop_event,
+                status_callback=self._set_voice_status,
+                should_stop=self._should_stop_voice,
+            )
+            self._set_led("yellow", False)
+
+            if self._stop_event.is_set():
+                self._end_voice_status()
+                return
+
+            if self._alarm_is_ringing():
+                self._end_voice_for_alarm()
+                return
+
+            if not self.assistant.is_valid_speech(user_text):
+                if user_text:
+                    print(f"Ignoriert: {user_text}")
+                    self._blink_led_async("red", 1.0)
+                self.command_router.end_dialog(cancel_confirmation=True)
+                self.assistant.reset_conversation()
+                self._set_voice_status("Sprachsteuerung", "beendet")
+                time.sleep(0.3)
+                self._end_voice_status()
+                return
+
+            if hasattr(self.ui, "last_button_time"):
+                self.ui.last_button_time = time.time()
+
+            if self._alarm_is_ringing():
+                self._end_voice_for_alarm()
+                return
+
+            answer = self.command_router.handle(user_text)
+
+            if answer is None:
+                if self._alarm_is_ringing():
+                    self._end_voice_for_alarm()
+                    return
+                print("Qwen denkt nach...")
+                self._set_voice_status("Wecker", "denkt nach")
+                answer = self.assistant.ask_qwen(user_text)
+            else:
+                print("Sprachbefehl lokal verarbeitet.")
+                if getattr(self.ui, "current_frame", None) == "voice_confirm":
+                    pass
+                else:
+                    self._set_voice_status("Befehl", "erkannt")
+
+            if self._alarm_is_ringing():
+                self._end_voice_for_alarm()
+                return
+
+            print(f"Antwort: {answer}")
+            self._set_voice_status(answer[:20], answer[20:40])
+            self.assistant.speak(answer, should_stop=self._should_stop_voice)
+            if self._alarm_is_ringing():
+                self._end_voice_for_alarm()
+                return
+            self._blink_led_async("green", 1.0)
+            time.sleep(0.5)
+
+        if self._alarm_is_ringing():
+            self._end_voice_for_alarm()
+            return
+
+        self._end_voice_status()
+
+    def run(self):
+        if not self.running:
+            print("[Voice] Thread not started because initialization failed.")
+            self._cleanup()
+            return
+
+        print("[Voice] Thread started. Waiting for Wake Word...")
+
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    if self._pause_while_alarm_rings():
+                        continue
+                    if self._wait_for_wake_word():
+                        self._handle_wake_word()
+                except Exception as exc:
+                    print(f"\n[Voice] Fehler: {exc}")
+                    self._blink_led_async("red", 1.0)
+                    self._end_voice_status()
+                    self._show_temp_message("Voice Error", "siehe Konsole", duration=5)
+                    time.sleep(0.5)
+        finally:
+            self._cleanup()
+            print("[Voice] Thread stopped.")
