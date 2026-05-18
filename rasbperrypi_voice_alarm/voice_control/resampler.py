@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-Audio resampling utility for real-time streams.
+Deprecated compatibility utility for real-time stream resampling.
+
+Wake-word and recording code now handle their own audio conversion. Keep this
+class available for older imports or experiments.
 """
 
 import torch
