@@ -80,7 +80,8 @@ class ManualStartTime:
                 self.update_display(); time.sleep(0.3)
             time.sleep(0.05)
         
-        d, t = self.date_digits
+        d = self.date_digits
+        t = self.time_digits
         try:
             day = int(f"{d[0]}{d[1]}")
             month = int(f"{d[2]}{d[3]}")
