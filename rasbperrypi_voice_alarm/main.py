@@ -15,7 +15,7 @@ from core.database import Database
 from hardware.sensors import LightSensor
 from ui.manual_setup import ManualStartTime
 from ui.clock_ui import AlarmClockUI
-from voice.voice_thread import VoiceControlThread
+from voice_control.voice_thread import VoiceControlThread
 
 # Optimize PyTorch for CPU usage
 torch.set_num_threads(2)
@@ -28,7 +28,7 @@ if __name__ == "__main__":
     db = Database()
     
     # 2. Initialize Hardware Sensors
-    sensor = LightSensor(pin=Config.PIN_LIGHT_SENSOR, enabled=False) # Set enable=True if in use
+    sensor = LightSensor(pin=Config.PIN_LIGHT_SENSOR, enabled=True) # Set enable=True if in use
     
     # 3. Manual Time Set (Blocking UI on Startup)
     m_start = ManualStartTime()
