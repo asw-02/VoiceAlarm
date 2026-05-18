@@ -31,31 +31,49 @@ class LightSensor:
         self.enabled = enabled  
 
     def is_dark(self) -> bool:
-        if not self.enabled: return False
+        if not self.enabled or not self.sensor: return False
         return not self.sensor.is_active
+
+    def close(self):
+        if self.sensor:
+            self.sensor.close()
+            self.sensor = None
 
 class HardwareButton:
     def __init__(self, pin, pull_up=True, bounce_time=Config.BOUNCE_TIME):
         self._button = Button(pin, pull_up=pull_up, bounce_time=bounce_time)
 
     @property
-    def is_pressed(self) -> bool: return self._button.is_pressed
+    def is_pressed(self) -> bool: return bool(self._button and self._button.is_pressed)
 
     def set_when_pressed(self, callback_function):
-        self._button.when_pressed = callback_function
+        if self._button:
+            self._button.when_pressed = callback_function
 
-    def close(self): self._button.close()
+    def close(self):
+        if self._button:
+            self._button.close()
+            self._button = None
 
 class StatusLED:
     def __init__(self, pin): self._led = LED(pin)
-    def on(self): self._led.on()
-    def off(self): self._led.off()
+    def on(self):
+        if self._led: self._led.on()
+    def off(self):
+        if self._led: self._led.off()
+    def close(self):
+        if self._led:
+            self._led.off()
+            self._led.close()
+            self._led = None
 
 class Buzzer:
     def __init__(self, pin=Config.PIN_BUZZER):
         self._buzzer = PWMOutputDevice(pin)
         
     def play_tone(self, frequency, duration=None, volume=0.5):
+        if not self._buzzer:
+            return
         self._buzzer.frequency = frequency
         self._buzzer.value = volume
         if duration:
@@ -63,15 +81,54 @@ class Buzzer:
             self._buzzer.value = 0
             
     def off(self):
-        self._buzzer.off()
+        if self._buzzer:
+            self._buzzer.off()
+
+    def close(self):
+        if self._buzzer:
+            self._buzzer.off()
+            self._buzzer.close()
+            self._buzzer = None
 
 class Solenoid:
     def __init__(self, pin=Config.PIN_MOSFET):
         self._solenoid = OutputDevice(pin)
+        self._off_timer = None
         
-    def fire(self, duration_sec=1.5):
+    def activate_solenoid(self, duration_sec=2.0):
+        if not self._solenoid:
+            return
+
+        print(">>> [Hardware] Hubmagnet AKTIVIERT (30s Pre-Alarm)")
+        print("Hubmagnet AN (Stift sollte EINZIEHEN)")
         self._solenoid.on()
-        threading.Timer(duration_sec, self._solenoid.off).start()
+
+        if self._off_timer:
+            self._off_timer.cancel()
+
+        self._off_timer = threading.Timer(duration_sec, self._deactivate_solenoid)
+        self._off_timer.daemon = True
+        self._off_timer.start()
+
+    def _deactivate_solenoid(self):
+        if not self._solenoid:
+            return
+
+        print("Hubmagnet AUS (Stift sollte AUSFAHREN)")
+        self._solenoid.off()
+        self._off_timer = None
+
+    def fire(self, duration_sec=2.0):
+        self.activate_solenoid(duration_sec=duration_sec)
+
+    def close(self):
+        if self._off_timer:
+            self._off_timer.cancel()
+            self._off_timer = None
+        if self._solenoid:
+            self._solenoid.off()
+            self._solenoid.close()
+            self._solenoid = None
 
 # --- COMPLEX MANAGERS (I2C) ---
 
@@ -126,6 +183,27 @@ class LCDManager:
                 self.lcd.write_string(" ") # Abstand danach
             except Exception: pass
 
+    def close(self):
+        with self.lock:
+            if not self.lcd:
+                return
+            try:
+                self.lcd.clear()
+                self.lcd.backlight_enabled = False
+            except Exception:
+                pass
+            try:
+                self.lcd.close(clear=False)
+            except TypeError:
+                try:
+                    self.lcd.close()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            self.lcd = None
+            self._cache = [""] * Config.VISIBLE_LINES
+
 class RTCManager:
     """Manager for the DS3231 Real Time Clock."""
     def __init__(self):
@@ -143,3 +221,11 @@ class RTCManager:
                     n.weekday() + 1, d_bcd(n.day), d_bcd(n.month), d_bcd(n.year % 100)]
             self.bus.write_i2c_block_data(0x68, 0x00, data)
         except Exception: pass
+
+    def close(self):
+        if self.bus and hasattr(self.bus, "close"):
+            try:
+                self.bus.close()
+            except Exception:
+                pass
+        self.bus = None
