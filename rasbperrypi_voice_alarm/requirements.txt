@@ -1,9 +1,16 @@
+# Raspberry Pi hardware
 gpiozero
+lgpio
 RPLCD
 smbus2
+
+# Audio, speech recognition, and HTTP
 sounddevice
 numpy
+requests
+vosk
+
+# Wake-word model / ML
+onnxruntime
 torch
 torchaudio
-onnxruntime
-vosk

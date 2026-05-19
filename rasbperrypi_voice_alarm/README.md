@@ -1,151 +1,277 @@
+# Raspberry Pi Voice Alarm
 
+A modular Raspberry Pi alarm clock with a 20x4 LCD interface, hardware
+buttons, GPIO output control, wake-word detection, Vosk speech recognition,
+Qwen through Ollama, and Piper text-to-speech.
+
+The project is built for a German voice workflow, but the code and project
+documentation are kept in English. Voice commands, confirmations, and spoken
+responses are currently German.
+
+## Features
+
+- LCD-based alarm clock UI with hardware button navigation.
+- Up to five configurable alarms stored in a local JSON state file.
+- GPIO support for buttons, buzzer, LEDs, light sensor, and MOSFET output.
+- Wake-word based voice control.
+- Dynamic microphone recording that starts on speech and stops after silence.
+- Offline German speech recognition with Vosk.
+- Local Qwen assistant through Ollama for chat and command parsing.
+- Piper-based German speech output.
+- Safety layer for mutating voice commands: alarm changes require UI or spoken
+  confirmation before they are applied.
 
 ## Project Structure
 
-The project follows Clean Code principles and is highly modular. Here is an overview of the core components:
-
-* `main.py`: The central entry point that initializes and starts all components.
-* `config.py`: Contains all configuration variables, file paths, and system thresholds.
-* `core/`: Contains the core logic for the alarm clock, such as the database interface (`database.py`) and alarm management logic (`alarm_manager.py`).
-* `hardware/`: Includes all scripts governing hardware parts, such as sensors and buzzers (`sensors.py`).
-* `ui/`: Encompasses the user interface modules (`clock_ui.py`, `manual_setup.py`) that manage the LCD menu and handling button inputs.
-* `voice_control/`: Contains the specific handling of audio recording, resampling (`resampler.py`), background execution (`voice_thread.py`), and intent parsing (`nlu.py`).
-* `models/`: (Must be populated manually) Contains the required AI models (Wake Word, NLU, STT).
-* `requirements.txt`: Python dependencies.
-
 ```text
-raspberrypi_voice_alarm/
-├── main.py
-├── config.py
-├── requirements.txt
-├── core/
-│   ├── alarm_manager.py
-│   └── database.py
-├── hardware/
-│   └── sensors.py
-├── models/
-├── ui/
-│   ├── clock_ui.py
-│   └── manual_setup.py
-└── voice_control/
-    ├── nlu.py
-    ├── resampler.py
-    └── voice_thread.py
+rasbperrypi_voice_alarm/
+|-- main.py
+|-- config.py
+|-- requirements.txt
+|-- README.md
+|-- core/
+|   |-- alarm_manager.py
+|   `-- database.py
+|-- hardware/
+|   `-- sensors.py
+|-- ui/
+|   |-- clock_ui.py
+|   `-- manual_setup.py
+|-- tests/
+|-- models/
+`-- voice_control/
+    |-- command_router.py
+    |-- qwen_assistant.py
+    |-- speech_format.py
+    |-- wake_word_detection.py
+    |-- voice_thread.py
+    |-- nlu.py          # legacy wrapper
+    |-- resampler.py    # legacy utility
+    `-- tts.py          # legacy wrapper
 ```
 
-## System Architecture
+## Main Components
 
-### Layered Architecture
-The software is designed following a **Layered Architecture** pattern to ensure high maintainability, scalability, and a clear separation of concerns (Presentation, Business Logic, Voice Processing, Persistence, and Hardware Abstraction).
+- `main.py` starts the database, hardware abstraction, LCD UI, alarm manager,
+  and voice-control thread.
+- `config.py` contains GPIO pin mappings, LCD settings, audio settings, model
+  paths, Ollama configuration, and Piper configuration.
+- `core/` contains the alarm manager and JSON database logic.
+- `hardware/` contains GPIO device setup for buttons, LEDs, buzzer, MOSFET, and
+  sensors.
+- `ui/` contains the clock display, menu flow, manual alarm setup, and voice
+  confirmation screens.
+- `voice_control/` contains wake-word detection, Vosk transcription, Qwen/Ollama
+  integration, speech formatting, Piper output, and safe command routing.
+- `tests/` contains unit tests for alarm behavior, command routing, and speech
+  formatting.
 
-- **Presentation Layer (`UI`):** Manages user interaction, menu-driven logic, and LCD display outputs (via `AlarmClockUI`). It delegates functional operations to the logic layer without handling complex business logic itself.
-- **Business Logic Layer (`Core`):** The functional heart of the system (`AlarmManager`). It manages the alarms, calculates trigger times, and unifies inputs coming from both physical buttons and voice commands.
-- **Voice Processing Layer (`Voice Control`):** An independent, concurrent component (`VoiceControlThread`) that handles Wake Word detection, Speech-to-Text (Vosk), and Natural Language Understanding (NLU). It transforms continuous audio data into structured semantic intents and parameters.
-- **Persistence Layer (`Core/Database`):** Encapsulates thread-safe JSON-based storage (`state.json`) using synchronization mechanisms (Locks) to prevent data corruption during parallel read/write operations.
-- **Hardware Abstraction Layer (`Hardware`):** Encapsulates interaction with physical components (microphone, GPIOs, buzzer, LEDs, LCD). This decouples the business logic from hardware dependencies, increasing future portability.
+## Architecture
 
-### Thread Architecture
-To guarantee real-time capabilities and responsiveness, the system utilizes a **concurrent execution model**, primarily driven by a dedicated, non-blocking `VoiceControlThread`.
+`VoiceControlThread` waits for the wake word. After activation, it speaks a
+short Piper acknowledgement, records the microphone input, stops recording after
+detected silence, and transcribes the generated WAV file with Vosk.
 
-- **Concurrency:** The `VoiceControlThread` runs completely independently from the main UI thread. This ensures that computationally heavy audio inference doesn't block the LCD menu or alarm evaluations.
-- **State-based Processing:** The audio thread continuously transitions between a "WAITING" state (listening for the wake word) and a "LISTENING" state (recording and transcribing full sentences).
-- **Synchronization:** Since multiple threads must access shared resources (like the `state.json` file or active alarms), `RLock` mechanisms are enforced to protect critical sections and prevent race conditions.
-- **Communication:** Voice commands are processed locally within the voice thread and are only handed over to the main business logic once they have been successfully parsed into structured data (Intents + Slots).
+The transcribed text is passed to `VoiceCommandRouter`. Simple local commands
+such as time, date, next alarm, active alarms, and common alarm actions are
+handled directly in Python. Qwen is used only when the local parser needs help
+understanding a command or when the user asks a general chat question.
 
----
+Alarm-changing actions are deliberately guarded. Creating, deleting, activating,
+or deactivating alarms does not write directly to `state.json`. Instead, the
+router creates a pending UI confirmation. The action is executed only after the
+Save button is pressed or after a spoken confirmation such as `ja`. A spoken
+negative response such as `nein`, `stop`, or `abbrechen` cancels the pending
+action.
 
-## Installation & Setup
+The voice dialog remains open briefly after each answer. If no speech is
+detected within `LISTEN_TIMEOUT_SECONDS`, voice control ends and the clock
+returns to its normal state.
 
-**1. System Requirements & System Packages**
+## Hardware
 
-Make sure I2C is enabled on your Raspberry Pi (`sudo raspi-config` > Interfacing Options > I2C).
-Install system dependencies for audio and I2C:
+The default GPIO mapping is defined in `Config` inside `config.py`:
+
+```text
+PIN_MENU         = 4
+PIN_UP           = 27
+PIN_DOWN         = 17
+PIN_SAVE         = 22
+PIN_AUTO         = 5
+PIN_BUZZER       = 12
+PIN_LIGHT_SENSOR = 23
+PIN_MOSFET       = 18
+PIN_LED_ROT      = 6
+PIN_LED_GELB     = 0
+PIN_LED_GRUEN    = 11
+```
+
+The UI is configured for a 20x4 I2C LCD:
+
+```text
+LCD_COLS      = 20
+VISIBLE_LINES = 4
+```
+
+If your wiring differs, update the pin values in `config.py` before running the
+application on the Raspberry Pi.
+
+## Requirements
+
+- Raspberry Pi with GPIO access.
+- Python 3.
+- I2C enabled for the LCD.
+- Microphone and audio output configured through ALSA.
+- Ollama running locally.
+- Qwen model pulled into Ollama.
+- German Vosk model.
+- Piper binary and German Piper voice model.
+- Wake-word ONNX model and dataset statistics file.
+
+## Installation
+
+Install system packages for I2C, LCD, and audio support:
 
 ```bash
 sudo apt-get update
-sudo apt-get install python3-smbus i2c-tools portaudio19-dev
+sudo apt-get install python3-smbus i2c-tools portaudio19-dev alsa-utils
 ```
 
-**2.Clone Project & Install Dependencies**
-
-It is highly recommended to use a virtual environment:
+Create and activate a Python virtual environment:
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-**3. Download AI Models**
 
-Place the following files and folders into the models/ directory:
+Install and prepare Ollama, then pull the configured Qwen model:
 
-* `vosk-model-de-0.21` (Download here https://alphacephei.com/vosk/models)
-* `nlu_model.onnx`
-* `wake_word_model.onnx`
-* `dataset_stats.pt`
+```bash
+ollama pull qwen3:1.7b
+```
 
-**4. Run the Application**
+The application expects Ollama at:
 
-Execute the main script:
+```text
+http://localhost:11434/api/chat
+```
+
+## Configuration
+
+All important runtime paths are configured in `VoiceConfig` inside `config.py`.
+
+Default Vosk path:
+
+```text
+/home/oemer/vosk-stt/vosk-model-de-0.21
+```
+
+Default Piper paths:
+
+```text
+/home/oemer/piper-tts/piper/piper
+/home/oemer/piper-tts/de_DE-thorsten-medium.onnx
+```
+
+Default wake-word paths:
+
+```text
+/home/oemer/wake-word-detection/wake_word_model.onnx
+/home/oemer/wake-word-detection/dataset_stats.pt
+```
+
+If your models or binaries are stored somewhere else, update these values:
+
+```python
+VoiceConfig.VOSK_MODEL_PATH
+VoiceConfig.PIPER_BIN
+VoiceConfig.PIPER_MODEL
+VoiceConfig.WAKE_MODEL_PATH
+VoiceConfig.WAKE_STATS_PATH
+```
+
+Microphone and recording behavior can also be tuned in `VoiceConfig`:
+
+```python
+VoiceConfig.MIC_DEVICE
+VoiceConfig.SAMPLE_RATE
+VoiceConfig.START_RMS
+VoiceConfig.STOP_RMS
+VoiceConfig.SILENCE_SECONDS
+VoiceConfig.LISTEN_TIMEOUT_SECONDS
+```
+
+## Running the Application
+
+Start the full alarm clock application:
 
 ```bash
 python3 main.py
 ```
 
-## Autostart on Boot (optional but recommended)
-
-To make this a true standalone alarm clock, you want the script to start automatically as soon as the Raspberry Pi gets power. We can achieve this by creating a `systemd` service.
-
-**1. Create a new service file:**
-Open your terminal and run:
-```bash
-sudo nano /etc/systemd/system/smart-alarm.service
-```
-
-**2. Paste the following configuration:**
-*(Make sure to adjust the `WorkingDirectory` and `ExecStart` paths if your username is not `pi` or if you placed the folder somewhere else).*
-
-```ini
-[Unit]
-Description=Smart AI Voice Alarm Clock
-After=network.target sound.target
-
-[Service]
-# Change 'pi' to your actual Raspberry Pi username if different
-User=pi
-Group=audio
-
-# The directory where your main.py lives
-WorkingDirectory=/home/pi/raspberrypi_voice_alarm
-
-# Use the Python executable from your virtual environment!
-ExecStart=/home/pi/raspberrypi_voice_alarm/venv/bin/python main.py
-
-# Restart automatically if the app crashes
-Restart=on-failure
-RestartSec=10
-
-# Ensures Python output is sent straight to syslog without buffering
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Save the file (`CTRL+O`, `Enter`) and exit nano (`CTRL+X`).
-
-**3. Enable and start the service:**
-Tell the system to recognize your new service, enable it to run on boot, and start it immediately:
+Run the standalone voice assistant module for debugging microphone, Vosk, Qwen,
+and Piper behavior:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable smart-alarm.service
-sudo systemctl start smart-alarm.service
+python3 voice_control/qwen_assistant.py
 ```
 
-**4. How to check if it's working:**
-If you need to see the live console output (e.g., to read your print statements or check for errors), you can view the logs with:
-```bash
-journalctl -u smart-alarm.service -f
+## Voice Commands
+
+The voice interface is currently optimized for German commands. Examples:
+
+```text
+Wie viel Uhr ist es?
+Welches Datum haben wir?
+Stelle einen Wecker um halb sieben.
+Stelle einen Wecker morgen um 07:30.
+Stelle einen Wecker werktags um 06:45.
+Welche Wecker sind aktiv?
+Wann klingelt der naechste Wecker?
+Deaktiviere Wecker eins.
+Loesche alle Wecker.
 ```
-*(Press `CTRL+C` to exit the log view).*
+
+Commands that change alarms require confirmation. After the clock asks for
+confirmation, say:
+
+```text
+ja
+nein
+abbrechen
+stop
+```
+
+## State File
+
+Alarms are stored in a local JSON file:
+
+```text
+state.json
+```
+
+The path is generated by `Config.get_state_path()` and points to the project
+directory. The file is created or updated by the database layer at runtime.
+
+## Useful Checks
+
+Compile the main modules:
+
+```bash
+python3 -m py_compile config.py voice_control/qwen_assistant.py voice_control/voice_thread.py voice_control/command_router.py ui/clock_ui.py
+```
+
+Run the test suite:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+## Notes
+
+- The project name folder currently uses the spelling
+  `rasbperrypi_voice_alarm`.
+- Some legacy wrappers are still present in `voice_control/` for compatibility.
+- Qwen never writes alarm data directly. All alarm mutations go through the
+  validated command router and UI confirmation flow.
