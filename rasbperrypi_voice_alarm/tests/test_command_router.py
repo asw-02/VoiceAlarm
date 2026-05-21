@@ -113,6 +113,28 @@ class CommandRouterTests(unittest.TestCase):
         self.assertEqual(answer, "Ein Wecker ist aktiv.")
         self.assertIsNone(self.ui.voice_payload)
 
+    def test_are_all_alarms_off(self):
+        answer = self.router.handle("Sind alle Wecker aus?")
+        self.assertEqual(answer, "Nein, ein Wecker ist aktiv.")
+        self.assertIsNone(self.ui.voice_payload)
+
+        self.ui.db.data["wecker"]["1"]["active"] = False
+
+        answer = self.router.handle("Sind alle Wecker aus?")
+        self.assertEqual(answer, "Ja, alle Wecker sind aus.")
+        self.assertIsNone(self.ui.voice_payload)
+
+    def test_get_alarm_by_id(self):
+        answer = self.router.handle("Wann klingelt Wecker eins?")
+        self.assertIn("Wecker 1 klingelt um sieben Uhr", answer)
+        self.assertIn("aktiv", answer)
+        self.assertIsNone(self.ui.voice_payload)
+
+    def test_list_tomorrow_active_alarms(self):
+        answer = self.router.handle("Welche Wecker sind morgen aktiv?")
+        self.assertEqual(answer, "Morgen am Montag ist Wecker 1 um sieben Uhr aktiv.")
+        self.assertIsNone(self.ui.voice_payload)
+
     def test_alarm_is_set_tomorrow(self):
         answer = self.router.handle("Ist morgen ein Wecker gestellt?")
         self.assertEqual(answer, "Ja, morgen am Montag klingelt 1 um sieben Uhr.")
