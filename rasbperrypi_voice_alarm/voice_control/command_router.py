@@ -31,8 +31,11 @@ ALLOWED_ACTIONS = {
     "get_next_alarm",
     "get_alarm_count",
     "get_active_alarm_count",
+    "are_all_alarms_off",
     "has_alarm_tomorrow",
+    "list_tomorrow_active_alarms",
     "get_next_weekend_alarm",
+    "get_alarm_by_id",
     "list_active_alarms",
     "chat",
 }
@@ -55,8 +58,11 @@ Erlaubte Aktionen:
 - get_next_alarm
 - get_alarm_count
 - get_active_alarm_count
+- are_all_alarms_off
 - has_alarm_tomorrow
+- list_tomorrow_active_alarms
 - get_next_weekend_alarm
+- get_alarm_by_id
 - list_active_alarms
 - chat
 
@@ -79,6 +85,11 @@ Regeln:
 - Wenn kein Tag genannt wird, setze days auf null.
 - Fragen wie "welche Wecker sind aktiv", "welche Alarme sind an" oder
   "was ist gerade aktiv" bedeuten action "list_active_alarms".
+- Fragen wie "sind alle Wecker aus" bedeuten action "are_all_alarms_off".
+- Fragen wie "wann klingelt Wecker eins" bedeuten action "get_alarm_by_id"
+  mit target_id 1.
+- Fragen wie "welche Wecker sind morgen aktiv" bedeuten action
+  "list_tomorrow_active_alarms".
 - Fragen nach Anzahl bedeuten action "get_alarm_count".
 - Allgemeine Gespraeche sind action "chat".
 """
@@ -438,6 +449,18 @@ class VoiceCommandRouter:
             return "Ein Wecker ist aktiv."
         return f"{active_count} Wecker sind aktiv."
 
+    def _are_all_alarms_off(self):
+        active_count = sum(
+            1 for alarm in self.ui.db.data.get("wecker", {}).values()
+            if alarm.get("active")
+        )
+
+        if active_count == 0:
+            return "Ja, alle Wecker sind aus."
+        if active_count == 1:
+            return "Nein, ein Wecker ist aktiv."
+        return f"Nein, {active_count} Wecker sind aktiv."
+
     @staticmethod
     def _parse_alarm_time(alarm):
         try:
@@ -492,6 +515,39 @@ class VoiceCommandRouter:
             return f"Ja, morgen am {day_name} klingelt {wid} um {time_text}."
 
         return f"Ja, morgen am {day_name} sind {len(alarms)} Wecker gestellt. Der erste ist {wid} um {time_text}."
+
+    def _list_tomorrow_active_alarms(self):
+        tomorrow = self.ui.get_now() + timedelta(days=1)
+        alarms = self._active_alarms_for_date(tomorrow)
+        day_name = self.DAY_NAMES.get(Config.DAYS[tomorrow.weekday()], Config.DAYS[tomorrow.weekday()])
+
+        if not alarms:
+            return f"Morgen am {day_name} ist kein Wecker aktiv."
+
+        parts = [
+            f"Wecker {wid} um {self._time_text(alarm.get('time', '--:--'))}"
+            for wid, alarm in alarms[:3]
+        ]
+
+        if len(alarms) == 1:
+            return f"Morgen am {day_name} ist {parts[0]} aktiv."
+        if len(alarms) > 3:
+            remaining = len(alarms) - 3
+            return f"Morgen am {day_name} sind {', '.join(parts)} und {remaining} weitere aktiv."
+        return f"Morgen am {day_name} sind {', '.join(parts)} aktiv."
+
+    def _get_alarm_by_id(self, target_id):
+        if target_id is None:
+            return "Welchen Wecker meinst du?"
+
+        alarm = self.ui.db.data.get("wecker", {}).get(str(target_id))
+        if not alarm:
+            return f"Wecker {target_id} ist nicht gespeichert."
+
+        status = "aktiv" if alarm.get("active") else "aus"
+        days = alarm.get("days", [])
+        label = self._format_alarm_label(days, alarm.get("date")) if days or alarm.get("date") else "ohne Tage"
+        return f"Wecker {target_id} klingelt um {self._time_text(alarm.get('time', '--:--'))}, {label}, und ist {status}."
 
     def _get_next_weekend_alarm(self):
         now = self.ui.get_now()
@@ -1008,6 +1064,23 @@ class VoiceCommandRouter:
             return "get_time"
         if any(phrase in normalized_text for phrase in ["welcher tag", "welchen tag", "datum", "heute fuer ein tag"]):
             return "get_date"
+        if "alle" in normalized_text and self._has_alarm_word(normalized_text) and any(
+            phrase in normalized_text
+            for phrase in ["sind aus", "sind alle aus", "alle aus", "wecker aus", "alarm aus", "ausgeschaltet"]
+        ):
+            return "are_all_alarms_off"
+        if "morgen" in normalized_text and any(
+            phrase in normalized_text
+            for phrase in [
+                "welche wecker",
+                "welche alarm",
+                "aktive wecker",
+                "aktive alarm",
+                "wecker aktiv",
+                "alarm aktiv",
+            ]
+        ):
+            return "list_tomorrow_active_alarms"
         if "morgen" in normalized_text and (
             "gestellt" in normalized_text
             or normalized_text.startswith("ist ")
@@ -1059,6 +1132,10 @@ class VoiceCommandRouter:
             ]
         ):
             return "list_active_alarms"
+        if "wann klingelt" in normalized_text:
+            target_id = self._parse_target_id(normalized_text)
+            if target_id is not None:
+                return {"action": "get_alarm_by_id", "target_id": target_id}
         if any(phrase in normalized_text for phrase in ["naechste wecker", "naechster wecker", "wann klingelt"]):
             return "get_next_alarm"
         return None
@@ -1291,10 +1368,16 @@ class VoiceCommandRouter:
             return self._get_alarm_count()
         if action == "get_active_alarm_count":
             return self._get_active_alarm_count()
+        if action == "are_all_alarms_off":
+            return self._are_all_alarms_off()
         if action == "has_alarm_tomorrow":
             return self._get_alarm_tomorrow()
+        if action == "list_tomorrow_active_alarms":
+            return self._list_tomorrow_active_alarms()
         if action == "get_next_weekend_alarm":
             return self._get_next_weekend_alarm()
+        if action == "get_alarm_by_id":
+            return self._get_alarm_by_id(command.get("target_id"))
         if action == "list_active_alarms":
             return self._list_active_alarms()
         if action == "delete_all_alarms" or command.get("delete_all"):
@@ -1329,7 +1412,9 @@ class VoiceCommandRouter:
         local_action = self._quick_local_action(normalized)
         local_command = self._parse_local_alarm_command(normalized)
 
-        if local_action:
+        if isinstance(local_action, dict):
+            command = local_action
+        elif local_action:
             command = {"action": local_action}
         elif local_command:
             command = local_command
