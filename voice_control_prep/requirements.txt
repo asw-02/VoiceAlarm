@@ -1,0 +1,13 @@
+torch
+torchaudio
+sklearn
+skl2onnx 
+wave
+sounddevice
+vosk
+matplotlib
+numpy
+seaborn
+faster_whisper 
+mlflow
+optuna
