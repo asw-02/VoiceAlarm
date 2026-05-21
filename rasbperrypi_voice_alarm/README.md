@@ -210,6 +210,82 @@ Start the full alarm clock application:
 python3 main.py
 ```
 
+## Autostart on Raspberry Pi
+
+Use a `systemd` service if the alarm clock should start automatically after the
+Raspberry Pi boots. `main.py` starts the voice-control thread itself, so Vosk is
+loaded automatically as long as `VoiceConfig.VOSK_MODEL_PATH` points to the
+installed Vosk model.
+
+First make sure the project works manually:
+
+```bash
+cd /home/oemer/rasbperrypi_voice_alarm
+source venv/bin/activate
+python3 main.py
+```
+
+If your project is stored in a different folder, replace
+`/home/oemer/rasbperrypi_voice_alarm` in the commands below.
+
+Create a service file:
+
+```bash
+sudo nano /etc/systemd/system/voice-alarm.service
+```
+
+Add this content:
+
+```ini
+[Unit]
+Description=Raspberry Pi Voice Alarm
+After=network-online.target sound.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oemer
+WorkingDirectory=/home/oemer/rasbperrypi_voice_alarm
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/oemer/rasbperrypi_voice_alarm/venv/bin/python /home/oemer/rasbperrypi_voice_alarm/main.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload `systemd`, enable the service, and start it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable voice-alarm.service
+sudo systemctl start voice-alarm.service
+```
+
+Check whether the alarm clock is running:
+
+```bash
+sudo systemctl status voice-alarm.service
+```
+
+Show live logs:
+
+```bash
+journalctl -u voice-alarm.service -f
+```
+
+Restart or stop the service:
+
+```bash
+sudo systemctl restart voice-alarm.service
+sudo systemctl stop voice-alarm.service
+```
+
+After the next reboot, `main.py` should start automatically. Vosk does not need
+an extra service because the application imports Vosk and loads the configured
+model path during voice recognition.
+
 Run the standalone voice assistant module for debugging microphone, Vosk, Qwen,
 and Piper behavior:
 
